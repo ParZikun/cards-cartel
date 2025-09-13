@@ -100,6 +100,8 @@ def get_transactions(cert_id: str, grade: str, company: str):
     transactions = get_asset_market_transactions(asset_id, grade, company)
     return transactions
 
+
+
 # --- SANITY TEST ---
 # This block runs only when you execute this file directly (e.g., "python get_alt_data.py")
 if __name__ == "__main__":
