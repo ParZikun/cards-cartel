@@ -59,6 +59,7 @@ def save_listings(listings: list):
             listing.get('listing_id'),
             listing.get('name'),
             listing.get('grade'),
+            listing.get('grade_num'),
             listing.get('category'),
             listing.get('insured_value'),
             listing.get('grading_company'),
@@ -72,9 +73,9 @@ def save_listings(listings: list):
     # Use INSERT OR IGNORE to prevent errors if a listing_id is already in the DB
     cursor.executemany("""
     INSERT OR IGNORE INTO listings (
-        listing_id, name, grade, category, insured_value, grading_company, 
+        listing_id, name, grade, grade_num, category, insured_value, grading_company, 
         img_url, grading_id, token_mint, price_sol, listed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, data_to_insert)
     
     conn.commit()

@@ -1,6 +1,7 @@
 import requests
 import json
 import time
+import re
 from datetime import datetime, timezone
 
 # TESTED WORKING WELL
@@ -37,8 +38,7 @@ def _process_listing(listing: dict, is_new: bool):
         category = "Box"
 
     # --- Data Extraction ---
-    grade_num = _get_attribute_value(attributes, "GradeNum")
-    grade = _get_attribute_value(attributes, "Grade")
+    grade = _get_attribute_value(attributes, "The Grade")
     cert_id = _get_attribute_value(attributes, "Grading ID")
     insured_value_str = _get_attribute_value(attributes, "Insured Value")
     
@@ -46,6 +46,15 @@ def _process_listing(listing: dict, is_new: bool):
     if not all([cert_id, name, grade, company]):
         return None
     
+    grade_num = 0.0
+    match = re.search(r'\d+(\.\d+)?', str(grade))
+    if match:
+        try:
+            grade_num = float(match.group(0))
+        except (ValueError, TypeError):
+            print(f"⚠️ Could not parse grade number from '{grade}'.")
+            pass 
+
     # Safely convert insured value to float
     insured_value = 0.0
     if insured_value_str:
@@ -111,7 +120,7 @@ def fetch_all_listings():
                 if processed:
                     all_processed_listings.append(processed)
                     processed_listing_ids.add(processed['listing_id'])
-            
+
             offset += limit
             time.sleep(0.6)
 
