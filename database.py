@@ -17,6 +17,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS listings (
         listing_id TEXT PRIMARY KEY,
         name TEXT,
+        grade_num REAL,
         grade TEXT,
         category TEXT,
         insured_value REAL,

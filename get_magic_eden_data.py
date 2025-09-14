@@ -37,7 +37,8 @@ def _process_listing(listing: dict, is_new: bool):
         category = "Box"
 
     # --- Data Extraction ---
-    grade = _get_attribute_value(attributes, "The Grade")
+    grade_num = _get_attribute_value(attributes, "GradeNum")
+    grade = _get_attribute_value(attributes, "Grade")
     cert_id = _get_attribute_value(attributes, "Grading ID")
     insured_value_str = _get_attribute_value(attributes, "Insured Value")
     
@@ -59,6 +60,7 @@ def _process_listing(listing: dict, is_new: bool):
     return {
         'listing_id': listing.get('pdaAddress'),
         'name': name,
+        'grade_num': grade_num,
         'grade': grade,
         'category': category,
         'insured_value': insured_value,
