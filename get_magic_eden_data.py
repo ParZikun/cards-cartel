@@ -1,23 +1,128 @@
 import requests
 import json
-import re
+import time
+from datetime import datetime, timezone
 
-def _get_attribute_value(listing_data: dict, target_trait: str):
-    """
-    Helper function to find the value for a specific traitType within a listing's attributes.
-    """
-    attributes_list = listing_data.get('token', {}).get('attributes', [])
+# TESTED WORKING WELL
+def _get_attribute_value(attributes_list: list, target_trait: str):
+    """Finds the value for a specific traitType within a list of attributes."""
     for attribute in attributes_list:
         if attribute.get('trait_type') == target_trait:
             return attribute.get('value')
     return None
 
-def get_magic_eden_listings():
+def _process_listing(listing: dict, is_new: bool):
     """
-    Fetches the most recent Pokémon card listings from Magic Eden.
+    Processes a single raw listing from the API into our desired dictionary format.
+    Returns the processed dictionary or None if it's invalid.
+    """
+    token_data = listing.get('token', {})
+    if not token_data:
+        return None
+        
+    attributes = token_data.get('attributes', [])
+    
+    # --- Primary Filtering ---
+    # User changed "BGS" to "Beckett"
+    company = _get_attribute_value(attributes, "Grading Company")
+    if company not in ["PSA", "Beckett"]:
+        return None 
 
-    This function is designed for a "watchdog" to periodically check for new listings.
-    It fetches only the first page of results (limit 50), which are the newest items.
+    name = token_data.get('name')
+    
+    category = "Card"
+    if name and "Bundle" in name:
+        category = "Bundle"
+    elif name and "Box" in name:
+        category = "Box"
+
+    # --- Data Extraction ---
+    grade = _get_attribute_value(attributes, "The Grade")
+    cert_id = _get_attribute_value(attributes, "Grading ID")
+    insured_value_str = _get_attribute_value(attributes, "Insured Value")
+    
+    # Ensure all critical data points are present
+    if not all([cert_id, name, grade, company]):
+        return None
+    
+    # Safely convert insured value to float
+    insured_value = 0.0
+    if insured_value_str:
+        try:
+            insured_value = float(insured_value_str.replace(',', ''))
+        except (ValueError, TypeError):
+            pass # Keep it 0.0 if parsing fails
+
+    # Set timestamp only if it's a new listing
+    timestamp = datetime.now(timezone.utc).isoformat() if is_new else None
+
+    return {
+        'listing_id': listing.get('pdaAddress'),
+        'name': name,
+        'grade': grade,
+        'category': category,
+        'insured_value': insured_value,
+        'grading_company': company,
+        'img_url': listing.get('extra', {}).get('img'),
+        'grading_id': cert_id,
+        'token_mint': listing.get('tokenMint'),
+        'price_sol': listing.get('price'), 
+        'listed_at': timestamp
+    }
+
+def fetch_all_listings():
+    """
+    Fetches ALL Pokémon listings from Magic Eden by handling pagination.
+    Returns a tuple: (list_of_all_listings, set_of_all_listing_ids).
+    """
+    print("🚀 Starting full data fetch. This may take a while...")
+    collection_symbol = "collector_crypt"
+    base_url = f"https://api-mainnet.magiceden.dev/v2/collections/{collection_symbol}/listings"
+    headers = {"accept": "application/json"}
+    
+    all_processed_listings = []
+    processed_listing_ids = set()
+    offset = 0
+    limit = 100
+
+    while True:
+        params = {
+            'offset': offset,
+            'limit': limit,
+            'attributes': json.dumps([[{"traitType": "Category", "value": "Pokemon"}]])
+        }
+        
+        try:
+            response = requests.get(base_url, headers=headers, params=params)
+            response.raise_for_status()
+            listings = response.json()
+
+            if not listings:
+                print("✅ No more listings found. Full fetch complete.")
+                break
+
+            print(f"Fetched {len(listings)} listings from offset {offset}...")
+            
+            for listing in listings:
+                # Process with is_new=False since this is the initial population
+                processed = _process_listing(listing, is_new=False)
+                if processed:
+                    all_processed_listings.append(processed)
+                    processed_listing_ids.add(processed['listing_id'])
+            
+            offset += limit
+            time.sleep(0.6)
+
+        except requests.exceptions.RequestException as e:
+            print(f"❌ An error occurred during full fetch: {e}")
+            break
+            
+    return all_processed_listings, processed_listing_ids
+
+def fetch_new_listings(processed_ids: set):
+    """
+    Fetches the most recent listings sorted by update time and intelligently
+    filters out any that have already been processed.
     """
     collection_symbol = "collector_crypt"
     base_url = f"https://api-mainnet.magiceden.dev/v2/collections/{collection_symbol}/listings"
@@ -25,86 +130,61 @@ def get_magic_eden_listings():
     
     params = {
         'offset': 0,
-        'limit': 50,
-        'attributes': json.dumps([
-            [{"traitType": "Category", "value": "Pokemon"}]
-        ])
+        'limit': 100, # Fetch the max allowed to ensure we see all new items
+        'sort': 'updatedAt',
+        'sort_direction': 'desc',
+        'attributes': json.dumps([[{"traitType": "Category", "value": "Pokemon"}]])
     }
     
-    processed_listings = []
+    new_listings = []
     
-    # Regex to extract the card ID from the 'Location' field for PSA cards.
-    psa_location_pattern = r"Collector Crypt[^\(]*\((\d+)\)"
-
     try:
         response = requests.get(base_url, headers=headers, params=params)
         response.raise_for_status()
         listings = response.json()
-
-        if not listings:
-            print("No recent listings found.")
-            return processed_listings
-
-        for listing in listings:
-            name = _get_attribute_value(listing, "Name")
-            
-            # Skip bundles and boxes as per the logic
-            if name and ("Bundle" in name or "Box" in name):
-                continue
-            
-            grading_id = _get_attribute_value(listing, "Grading ID")
-            grade = _get_attribute_value(listing, "The Grade")
-            company = _get_attribute_value(listing, "Grading Company")
-            
-            # Logic to determine the correct card_id
-            card_id = None
-            if company == "PSA":
-                location = _get_attribute_value(listing, "Location")
-                if location:
-                    match = re.search(psa_location_pattern, location)
-                    if match:
-                        card_id = match.group(1)
-            
-            # Fallback to grading_id if it's not a PSA card with a special location format
-            if not card_id:
-                card_id = grading_id
-                
-            if all([card_id, name, grade, company]):
-                processed_listings.append({
-                    'cert_id': card_id, # Standardized name for the final ID
-                    'name': name,
-                    'price': listing.get('price'),
-                    'grade': grade,
-                    'company': company,
-                    'token_mint': listing.get('tokenMint'),
-                    'img_url': listing.get('extra', {}).get('img')
-                })
-            else:
-                # This helps debug if a listing is missing critical data
-                print(f"⚠️ Skipping listing due to missing data. Name: {name}, Cert ID: {card_id}")
-
-    except requests.exceptions.RequestException as e:
-        print(f"❌ An error occurred while fetching Magic Eden data: {e}")
-        return None # Return None on error
-
-    return processed_listings
-
-# --- Example Usage ---
-# This block runs only when you execute this file directly.
-if __name__ == "__main__":
-    print("--- Fetching most recent Magic Eden listings (for sanity check) ---")
-    
-    # In your main pipeline, you will import and call get_magic_eden_listings()
-    recent_listings = get_magic_eden_listings()
-    
-    if recent_listings is not None:
-        print(f"\nSuccessfully fetched {len(recent_listings)} new listings.")
         
-        if recent_listings:
-            # Print the first 3 listings for a quick preview
-            print("\n--- Sample of Recent Listings ---")
-            for i, card in enumerate(recent_listings[:3]):
-                print(f"\nListing {i+1}:")
-                print(json.dumps(card, indent=2))
-    else:
-        print("\nFailed to fetch listings.")
+        for listing in listings:
+            listing_id = listing.get('pdaAddress')
+            if listing_id and listing_id not in processed_ids:
+                # This is a new listing. Process it.
+                processed = _process_listing(listing, is_new=True)
+                if processed:
+                    new_listings.append(processed)
+            else:
+                # **CRITICAL OPTIMIZATION**
+                # Because the API response is sorted by newest, the moment we
+                # find a listing we've already seen, we can stop checking.
+                break
+    
+    except requests.exceptions.RequestException as e:
+        print(f"❌ An error occurred during new listings fetch: {e}")
+        return []
+
+    # The list is newest-to-oldest, reverse it to process in chronological order
+    return list(reversed(new_listings))
+
+# --- Sanity Check / Example Usage ---
+if __name__ == "__main__":
+    
+    # 1. On the very first run, populate everything
+    all_listings, processed_ids_set = fetch_all_listings()
+    print(f"\n✅ Initial population complete. Found {len(all_listings)} listings.")
+    print(f"Total unique listing IDs stored: {len(processed_ids_set)}")
+
+    # 2. Simulate the watchdog loop
+    print("\n--- Simulating Watchdog (running 3 checks) ---")
+    for i in range(3):
+        print(f"\n[Watchdog Check #{i+1}]")
+        new_items = fetch_new_listings(processed_ids_set)
+        
+        if new_items:
+            print(f"🔥 Found {len(new_items)} new items!")
+            for item in new_items:
+                print(f"  -> Processing: {item['name']} ({item['listing_id']})")
+                processed_ids_set.add(item['listing_id'])
+            print(f"Total processed IDs is now: {len(processed_ids_set)}")
+        else:
+            print("✅ No new listings found.")
+        
+        if i < 2: # Don't sleep on the last iteration
+             time.sleep(2)

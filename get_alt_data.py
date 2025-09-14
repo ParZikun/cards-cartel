@@ -52,71 +52,182 @@ def get_asset_id(cert_id: str):
         print(f"ERROR: API call to get asset_id failed for cert '{cert_id}': {e}")
         return None
 
-def get_asset_market_transactions(asset_id: str, grade: str, company: str):
-    """Fetches and cleans recent market transactions for a specific asset."""
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-    
+def get_asset_details(asset_id: str, grade: str, company: str):
+    """
+    NEW: Fetches asset details, including Alt Value, confidence, and card populations.
+    """
+    query = """
+    query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
+      asset(id: $id) {
+        altValueInfo(tsFilter: $tsFilter) {
+          currentAltValue
+          confidenceData {
+            currentConfidenceMetric
+            currentErrorLowerBound
+            currentErrorUpperBound
+            __typename
+          }
+          __typename
+        }
+        cardPops {
+          ...CardPopBase
+          __typename
+        }
+        __typename
+      }
+    }
+    fragment CardPopBase on CardPop {
+      gradingCompany
+      gradeNumber
+      count
+      __typename
+    }
+    """
     payload = {
-        "operationName": "AssetMarketTransactionsWithTimeSeriesData",
+        "operationName": "AssetDetails",
         "variables": {
             "id": asset_id,
-            "marketTransactionFilter": {"gradingCompany": company, "gradeNumber": f"{float(grade):.1f}", "allGrades": False},
-            "tsFilter": {"autograph": None, "endDate": end_date, "gradeNumber": f"{float(grade):.1f}", "gradingCompany": company, "startDate": start_date}
+            "tsFilter": {"gradeNumber": f"{float(grade):.1f}", "gradingCompany": company}
         },
-        "query": "query AssetMarketTransactionsWithTimeSeriesData($id: ID!, $marketTransactionFilter: MarketTransactionFilter!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { pricingData( marketTransactionFilter: $marketTransactionFilter tsFilter: $tsFilter ) { marketTransactions { id date price __typename } __typename } __typename } }"
+        "query": query
     }
-    
+    try:
+        response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"ERROR: API call to get asset details failed for asset '{asset_id}': {e}")
+        return None
+
+def get_asset_market_transactions(asset_id: str, grade: str, company: str):
+    """
+    Fetches ONLY the recent market transactions for a specific asset using the simplified endpoint.
+    """
+    query = """
+    query AssetMarketTransactions($id: ID!, $marketTransactionFilter: MarketTransactionFilter!) {
+      asset(id: $id) {
+        marketTransactions(marketTransactionFilter: $marketTransactionFilter) {
+          ...MarketTransactionBase
+          __typename
+        }
+        __typename
+      }
+    }
+    fragment MarketTransactionBase on MarketTransaction {
+      date
+      price
+      __typename
+    }
+    """
+    payload = {
+        "operationName": "AssetMarketTransactions",
+        "variables": {
+            "id": asset_id,
+            "marketTransactionFilter": {"gradingCompany": company, "gradeNumber": f"{float(grade):.1f}", "showSkipped": True}
+        },
+        "query": query
+    }
     try:
         response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload)
         response.raise_for_status()
         data = response.json()
-        
-        transactions = data.get('data', {}).get('asset', {}).get('pricingData', {}).get('marketTransactions', [])
-        return transactions
-        
+        return data.get('data', {}).get('asset', {}).get('marketTransactions', [])
     except requests.exceptions.RequestException as e:
-        print(f"ERROR: API call to get market transactions failed for asset '{asset_id}': {e}")
-        return None
+        print(f"ERROR: API call to get transactions failed for asset '{asset_id}': {e}")
+        return []
 
-def get_transactions(cert_id: str, grade: str, company: str):
+def get_alt_data(cert_id: str, grade: str, company: str):
     """
-    Main function to orchestrate the process of getting transactions for a given cert ID.
-    This is the function you will call from other files.
+    Main orchestrator function. Returns a dict with: alt_value, avg_price, supply, and confidence data.
     """
     asset_id = CERT_ID_TO_ASSET_ID_CACHE.get(cert_id)
-    
     if not asset_id:
-        print(f"CACHE MISS: Looking up asset_id for cert '{cert_id}'...")
         asset_id = get_asset_id(cert_id)
-        if asset_id:
-            CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset_id
-            print(f"SUCCESS: Found asset_id '{asset_id}'. Storing in cache.")
-        else:
-            return None
-    else:
-        print(f"CACHE HIT: Found asset_id '{asset_id}' for cert '{cert_id}'.")
+        if not asset_id: return None
+        CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset_id
 
+    # --- Step 1: Get Details (Alt Value & Supply) ---
+    details_data = get_asset_details(asset_id, grade, company)
+    if not details_data or not details_data.get('data', {}).get('asset'):
+        return None
+        
+    asset_data = details_data['data']['asset']
+    alt_value_info = asset_data.get('altValueInfo', {})
+    confidence_data = alt_value_info.get('confidenceData', {})
+    
+    # Extract core values
+    alt_value = alt_value_info.get('currentAltValue', 0.0)
+    lower_bound = confidence_data.get('currentErrorLowerBound', 0.0)
+    upper_bound = confidence_data.get('currentErrorUpperBound', 0.0)
+    confidence = confidence_data.get('currentConfidenceMetric', 0.0)
+    
+    # Extract supply
+    supply = 0
+    card_pops = asset_data.get('cardPops', [])
+    for pop in card_pops:
+        if pop.get('gradingCompany') == company and str(pop.get('gradeNumber')) == f"{float(grade):.1f}":
+            supply = pop.get('count', 0)
+            break
+
+    # --- Step 2: Get Transactions for Avg Price ---
     transactions = get_asset_market_transactions(asset_id, grade, company)
-    return transactions
 
+    # --- Step 3: Calculate Avg Price based on Supply ---
+    num_to_avg = 4 if 0 < supply < 3000 else 10
+    recent_sales = [float(tx['price']) for tx in transactions[:num_to_avg]]
+    avg_price = sum(recent_sales) / len(recent_sales) if recent_sales else 0
 
+    return {
+        "alt_value": alt_value or 0.0,
+        "avg_price": avg_price or 0.0,
+        "supply": supply or 0,
+        "lower_bound": lower_bound or 0.0,
+        "upper_bound": upper_bound or 0.0,
+        "confidence": confidence or 0.0
+    }
 
 # --- SANITY TEST ---
-# This block runs only when you execute this file directly (e.g., "python get_alt_data.py")
 if __name__ == "__main__":
-    # Example card details you'd get from a Magic Eden listing
-    example_cert_id = "53030514" # ME - GRADING ID
-    example_grade = "10"         # ME - GRADE NUM 
-    example_company = "PSA"      # ME - GRADING COMPANY
+    example_cert_id = "125552008"
+    example_grade = "10"
+    example_company = "PSA"
     
     print("--- Running Standalone Test ---")
-    all_transactions = get_transactions(example_cert_id, example_grade, example_company)
+    processed_data = get_alt_data(example_cert_id, example_grade, example_company)
     
-    if all_transactions:
-        print(f"\nSuccessfully fetched {len(all_transactions)} transactions.")
-        for tx in all_transactions[:5]:
-            price_value = float(tx['price'])
-            print(f"  - Date: {tx['date']}, Price: ${price_value:.2f}")
+    if processed_data:
+        print("\n--- Processed Data ---")
+        print(f"  - Supply (Pop Count): {processed_data['supply']}")
+        print(f"  - Alt Value: ${processed_data['alt_value']:.2f} (Confidence: {processed_data['confidence']}%)")
+        print(f"  - Value Range: ${processed_data['lower_bound']:.2f} - ${processed_data['upper_bound']:.2f}")
+        print(f"  - Calculated Avg. Price: ${processed_data['avg_price']:.2f}")
     else:
-        print("\nCould not fetch transactions for the given card.")
+        print("\nCould not fetch and process ALT data for the given card.")
+
+
+# if __name__ == "__main__":
+#     example_cert_id = "125552008"
+#     example_grade = "10"
+#     example_company = "PSA"
+    
+#     print("--- Running Standalone Test ---")
+#     alt_data = get_alt_data(example_cert_id, example_grade, example_company)
+    
+#     if alt_data:
+#         transactions = alt_data.get("transactions", [])
+#         time_series_data = alt_data.get("time_series", {}).get("data", [])
+
+#         print(f"\nSuccessfully fetched {len(transactions)} transactions.")
+#         if transactions:
+#             print("--- Sample Transactions ---")
+#             for tx in transactions[:3]:
+#                 price_value = float(tx['price'])
+#                 print(f"  - Date: {tx['date']}, Price: ${price_value:.2f}")
+
+#         print(f"\nSuccessfully fetched {len(time_series_data)} time series data points.")
+#         if time_series_data:
+#              print("--- Sample Time Series Data (Alt Value) ---")
+#              for value in time_series_data[:3]:
+#                  print(f"  - {value:.2f}")
+#     else:
+#         print("\nCould not fetch ALT data for the given card.")
