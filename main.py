@@ -22,7 +22,7 @@ async def enrich_unprocessed_listings(queue: asyncio.Queue):
     for i, listing in enumerate(unprocessed_listings):
         await enrich_and_send(listing, queue)
         # We add the sleep here to ensure a gap between each listing's API calls
-        await asyncio.sleep(1.5) # Respectful 3-second delay
+        await asyncio.sleep(3) # Respectful 3-second delay
 
 async def enrich_and_send(listing: dict, queue: asyncio.Queue):
     """Single-listing processing pipeline: Get ALT data -> Save -> Queue for Discord."""
@@ -35,7 +35,7 @@ async def enrich_and_send(listing: dict, queue: asyncio.Queue):
         processed_alt_data = await loop.run_in_executor(
             None, alt.get_alt_data, 
             listing['grading_id'], 
-            listing.get('grade_num', 0), 
+            str(listing.get('grade_num', 0)), 
             listing['grading_company']
         )
         
@@ -56,7 +56,7 @@ async def enrich_and_send(listing: dict, queue: asyncio.Queue):
             await queue.put({
                 'listing_data': listing,
                 'snipe_details': snipe_details,
-                'alert_level': 'INFO' # Change this later when sniper logic is added
+                'alert_level': 'HIGH' # Change this later when sniper logic is added
             })
             duration = time.time() - start_time
             print(f"    ✅ Success. Processing took {duration:.3f} seconds.")
@@ -115,6 +115,10 @@ async def main():
 
     # Start the Discord bot in the background and the watchdog in the foreground
     discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue))
+
+    # Enrich any listings that are missing data before starting the watchdog
+    await enrich_unprocessed_listings(snipe_queue)
+
     watchdog_task = asyncio.create_task(watchdog(snipe_queue))
 
     await asyncio.gather(discord_task, watchdog_task)

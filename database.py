@@ -123,7 +123,7 @@ def update_listing_alt_data(listing_id: str, alt_data: dict):
     cursor.execute("""
     UPDATE listings 
     SET 
-        alt_asset_id = ?
+        alt_asset_id = ?,
         alt_value = ?, 
         avg_sale_price = ?, 
         supply = ?, 

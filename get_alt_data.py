@@ -177,7 +177,7 @@ def get_alt_data(cert_id: str, grade: str, company: str):
     avg_price = sum(recent_sales) / len(recent_sales) if recent_sales else 0
 
     return {
-        "asset_id": asset_id or None,
+        "alt_asset_id": asset_id or None,
         "alt_value": alt_value or 0.0,
         "avg_price": avg_price or 0.0,
         "supply": supply or 0,
@@ -197,7 +197,7 @@ if __name__ == "__main__":
     
     if processed_data:
         print("\n--- Processed Data ---")
-        print(f"  - Asset id: {processed_data['asset_id']}")
+        print(f"  - Asset id: {processed_data['alt_asset_id']}")
         print(f"  - Supply (Pop Count): {processed_data['supply']}")
         print(f"  - Alt Value: ${processed_data['alt_value']:.2f} (Confidence: {processed_data['confidence']}%)")
         print(f"  - Value Range: ${processed_data['lower_bound']:.2f} - ${processed_data['upper_bound']:.2f}")
