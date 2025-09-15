@@ -40,26 +40,61 @@ async def enrich_and_send(listing: dict, queue: asyncio.Queue):
         )
         
         if processed_alt_data:
-            # Save enriched data to the database
-            await asyncio.to_thread(database.update_listing_alt_data, listing['listing_id'], processed_alt_data)
-            
             # BUSINESS CONDITION HERE WHICH WILL DECIDE THE alert_level and if we wanna process it or not 
-
-            # For now, we send every new listing to Discord as an "INFO" alert for testing
             prices = utils.get_price_in_both_currencies(listing['price_amount'], listing['price_currency'])
             if prices:
                 snipe_details = {**processed_alt_data, 'listing_price_usd': prices['price_usdc']}
             else:
                 print("Error Converting Price to USDC")
                 raise
+
+            listing_price_usd = prices['price_usdc']
+            alt_value = processed_alt_data.get('alt_value', 0)
+
+            alert_level = None
+            difference_str = "N/A"
+
+            if alt_value > 0 and listing_price_usd > 0:
+                difference_percent = ((listing_price_usd - alt_value) / alt_value) * 100
+                
+                # --- AUTOSNIPE (DISABLED FOR NOW) ---
+                # Format the difference string for the embed
+                if difference_percent <= -30:
+                    print(f"  -> AUTOSNIPE TRIGGERED (LOGIC DISABLED)")
+                    alert_level = 'HIGH'
+                    difference_str = f"🟢 **{difference_percent:.2f}%**"
+
+                elif difference_percent <= -20:
+                    alert_level = 'HIGH'
+                    difference_str = f"{difference_percent:+.2f}%"
+
+                elif difference_percent <= -15:
+                    alert_level = 'INFO'
+                    difference_str = f"{difference_percent:+.2f}%"
+
+                else:
+                    difference_str = f"{difference_percent:+.2f}%"
             
-            await queue.put({
-                'listing_data': listing,
-                'snipe_details': snipe_details,
-                'alert_level': 'HIGH' # Change this later when sniper logic is added
-            })
-            duration = time.time() - start_time
-            print(f"    ✅ Success. Processing took {duration:.3f} seconds.")
+                snipe_details['difference_str'] = difference_str # Add to details for the embed
+
+            if alert_level:
+                print(f"    -> Found a {alert_level} snipe! Queueing for Discord.")
+                await queue.put({
+                    'listing_data': listing,
+                    'snipe_details': snipe_details,
+                    'alert_level': alert_level
+                })
+                duration = time.time() - start_time
+                await asyncio.to_thread(database.update_listing_alt_data, listing['listing_id'], processed_alt_data)
+                print(f"    ✅ Success. Processing took {duration:.3f} seconds.")
+            else:
+                print(f"    -> Listing did not meet snipe criteria.")
+
+            # await queue.put({
+            #     'listing_data': listing,
+            #     'snipe_details': snipe_details,
+            #     'alert_level': 'HIGH' # Change this later when sniper logic is added
+            # })     
         else:
             print(f"    ⚠️ Could not fetch ALT data for {listing.get('name')}.")
 
