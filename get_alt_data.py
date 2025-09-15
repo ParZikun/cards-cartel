@@ -2,7 +2,6 @@ import os
 import requests
 import json
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -198,37 +197,10 @@ if __name__ == "__main__":
     
     if processed_data:
         print("\n--- Processed Data ---")
+        print(f"  - Asset id: {processed_data['asset_id']}")
         print(f"  - Supply (Pop Count): {processed_data['supply']}")
         print(f"  - Alt Value: ${processed_data['alt_value']:.2f} (Confidence: {processed_data['confidence']}%)")
         print(f"  - Value Range: ${processed_data['lower_bound']:.2f} - ${processed_data['upper_bound']:.2f}")
         print(f"  - Calculated Avg. Price: ${processed_data['avg_price']:.2f}")
     else:
         print("\nCould not fetch and process ALT data for the given card.")
-
-
-# if __name__ == "__main__":
-#     example_cert_id = "125552008"
-#     example_grade = "10"
-#     example_company = "PSA"
-    
-#     print("--- Running Standalone Test ---")
-#     alt_data = get_alt_data(example_cert_id, example_grade, example_company)
-    
-#     if alt_data:
-#         transactions = alt_data.get("transactions", [])
-#         time_series_data = alt_data.get("time_series", {}).get("data", [])
-
-#         print(f"\nSuccessfully fetched {len(transactions)} transactions.")
-#         if transactions:
-#             print("--- Sample Transactions ---")
-#             for tx in transactions[:3]:
-#                 price_value = float(tx['price'])
-#                 print(f"  - Date: {tx['date']}, Price: ${price_value:.2f}")
-
-#         print(f"\nSuccessfully fetched {len(time_series_data)} time series data points.")
-#         if time_series_data:
-#              print("--- Sample Time Series Data (Alt Value) ---")
-#              for value in time_series_data[:3]:
-#                  print(f"  - {value:.2f}")
-#     else:
-#         print("\nCould not fetch ALT data for the given card.")
