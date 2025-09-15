@@ -30,6 +30,7 @@ def init_db():
         alt_value REAL,
         avg_sale_price REAL,
         supply INTEGER,
+        alt_asset_id TEXT,
         alt_value_lower_bound REAL,
         alt_value_upper_bound REAL,
         alt_value_confidence REAL,
@@ -126,6 +127,7 @@ def update_listing_alt_data(listing_id: str, alt_data: dict):
     cursor.execute("""
     UPDATE listings 
     SET 
+        alt_asset_id = ?
         alt_value = ?, 
         avg_sale_price = ?, 
         supply = ?, 
@@ -135,6 +137,7 @@ def update_listing_alt_data(listing_id: str, alt_data: dict):
         last_checked_at = ?
     WHERE listing_id = ?
     """, (
+        alt_data.get('asset_id'),
         alt_data.get('alt_value'), 
         alt_data.get('avg_price'), 
         alt_data.get('supply'),

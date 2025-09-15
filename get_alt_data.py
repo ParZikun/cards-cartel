@@ -178,6 +178,7 @@ def get_alt_data(cert_id: str, grade: str, company: str):
     avg_price = sum(recent_sales) / len(recent_sales) if recent_sales else 0
 
     return {
+        "asset_id": asset_id or None,
         "alt_value": alt_value or 0.0,
         "avg_price": avg_price or 0.0,
         "supply": supply or 0,
