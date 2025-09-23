@@ -1,8 +1,11 @@
 import requests
 import time
+import requests
+import time
+import logging
 
-# --- Cache Configuration ---
-# We will store the price in memory. These variables will persist as long as the script is running.
+logger = logging.getLogger(__name__)
+
 _cached_sol_price = 0.0
 _last_fetch_time = 0
 CACHE_DURATION_SECONDS = 300  # 5 minutes (5 * 60)
@@ -14,12 +17,12 @@ def _fetch_sol_to_usdc_price():
     """
     url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
         data = response.json()
         return data['solana']['usd']
     except (requests.exceptions.RequestException, KeyError) as e:
-        print(f"❌ ERROR: Could not fetch SOL price from CoinGecko: {e}")
+        logger.error(f"Could not fetch SOL price from CoinGecko: {e}")
         return None
 
 def get_price_in_both_currencies(amount: float, currency: str):
@@ -32,39 +35,56 @@ def get_price_in_both_currencies(amount: float, currency: str):
     # --- Caching Logic ---
     current_time = time.time()
     if (current_time - _last_fetch_time) > CACHE_DURATION_SECONDS:
-        print("[Price] Cache is stale or empty. Fetching new SOL price from CoinGecko...")
+        logger.info("Price cache is stale or empty. Fetching new SOL price...")
         new_price = _fetch_sol_to_usdc_price()
-        
         if new_price is not None:
             _cached_sol_price = new_price
             _last_fetch_time = current_time
-            print(f"✅ New SOL price cached: ${_cached_sol_price:.2f}")
+            logger.info(f"New SOL price cached: ${_cached_sol_price:.2f}")
         else:
-            print("⚠️ WARN: Failed to fetch new price. Using previous cached value (if available).")
+            logger.warning(f"WARN: Failed to fetch new price. Using previous cached value (if available).")
 
     # --- Conversion Logic ---
     if _cached_sol_price == 0.0:
-        print("❌ CRITICAL: Cannot perform price conversion, no cached price available.")
+        logger.critical("Cannot perform price conversion, no cached price available.")
         return None # Cannot proceed without a price
 
     currency = currency.upper()
     if currency == 'SOL':
-        sol_amount = amount
-        usdc_amount = amount * _cached_sol_price
+        return {'price_sol': amount, 'price_usdc': amount * _cached_sol_price}
     elif currency == 'USDC':
-        usdc_amount = amount
-        sol_amount = amount / _cached_sol_price
-    else:
-        print(f"❌ ERROR: Invalid currency '{currency}'. Must be 'SOL' or 'USDC'.")
-        return None
-        
-    return {
-        'price_sol': sol_amount,
-        'price_usdc': usdc_amount
-    }
+        return {'price_sol': amount / _cached_sol_price, 'price_usdc': amount}
+    return None
 
+def get_cc_data(token_mint: str):
+    """
+    Fetches the full card name and insured value from the Collector Crypt API.
+    """
+    if not token_mint: return None
+    url = f"https://api.collectorcrypt.com/cards/publicNft/{token_mint}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://collectorcrypt.com/',
+        'Origin': 'https://collectorcrypt.com'
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        return {
+            'name': data.get('itemName'),
+            'created-at': data.get('createdAt')
+        }
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Could not fetch Collector Crypt API data for mint {token_mint}: {e}")
+        return None
+    
 # --- Example Usage ---
 if __name__ == "__main__":
+    data  = get_cc_data('HXaqbDSXmdwzPW9c2GR1uvEGJUSDPCF6BxJojLaU3rvb')
+    print(data)
     print("--- Testing Price Conversion Utility with Caching ---")
     
     # First call: Should fetch from the API

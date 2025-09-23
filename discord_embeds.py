@@ -15,7 +15,10 @@ def create_snipe_embed(listing_data: dict, snipe_details: dict, alert_level: str
     Creates a rich discord.Embed object based on the new design.
     """
     footer_icon = "https://emoji.discadia.com/emojis/7b975e64-50d6-4710-a49f-e55bc1e629e2.png"
-    if alert_level.upper() == 'HIGH':
+    if alert_level.upper() == 'GOLD':
+        color = 0xffd700  # Gold
+        footer_text = "AUTOBUY SNIPE"
+    elif alert_level.upper() == 'HIGH':
         color = 0xff0000  # Red
         footer_text = "HIGH ALERT SNIPE"
     else:
@@ -25,17 +28,6 @@ def create_snipe_embed(listing_data: dict, snipe_details: dict, alert_level: str
     me_link = f"https://magiceden.io/item-details/{listing_data.get('token_mint')}"
     cc_link = f"https://collectorcrypt.com/assets/solana/{listing_data.get('token_mint')}"
     alt_link = f"https://app.alt.xyz/research/{snipe_details.get('alt_asset_id')}" if snipe_details.get('alt_asset_id') else "https://app.alt.xyz/"
-
-    listing_price_usd = snipe_details.get('listing_price_usd', 0)
-    alt_value = snipe_details.get('alt_value', 0)
-    difference_str = "N/A"
-    if alt_value > 0 and listing_price_usd > 0:
-        difference_percent = ((listing_price_usd - alt_value) / alt_value) * 100
-        # Add a green circle if it's a significant discount
-        if difference_percent <= -50:
-            difference_str = f"🟢 **{difference_percent:.2f}%**"
-        else:
-            difference_str = f"{difference_percent:+.2f}%" # Show + or - sign
 
     # --- Construct the Multi-line Description ---
     description = (
@@ -60,8 +52,8 @@ def create_snipe_embed(listing_data: dict, snipe_details: dict, alert_level: str
 
     # --- Add Inline Fields for Stats ---
     currency_emote = SOL_EMOTE if listing_data.get('price_currency') == 'SOL' else USDC_EMOTE
-    embed.add_field(name=f"{ME_EMOTE} Listed Price", value=f"{currency_emote} {listing_data.get(f'price_amount', 0):.4f}\n*({USDC_EMOTE} {listing_price_usd:.2f})*", inline=True)
-    embed.add_field(name="Difference", value=difference_str, inline=True)
+    embed.add_field(name=f"{ME_EMOTE} Listed Price", value=f"{currency_emote} {listing_data.get(f'price_amount', 0):.4f}\n*({USDC_EMOTE} {snipe_details.get('listing_price_usd', 0):.2f})*", inline=True)
+    embed.add_field(name="Difference", value=snipe_details['difference_str'], inline=True)
     embed.add_field(name=f"Cartel AVG", value=f"{USDC_EMOTE} {snipe_details.get('avg_price', 0):.2f}", inline=True)
     embed.add_field(name=f"Alt Value", value=f"{USDC_EMOTE} {snipe_details.get('alt_value', 0):.2f}", inline=True)
     embed.add_field(name="ALT Confidence", value=f"{snipe_details.get('confidence', 0)}%", inline=True)

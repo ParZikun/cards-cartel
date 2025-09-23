@@ -1,86 +1,103 @@
-# cards-cartel
+# 🃏 Cards Cartel Sniper
 
-## THINGS TO REMEMBER
-- U need a way to refresh the auth and cookies data if they expire
-- also need to think for a backup if acc is bloacked (like think of ways that the id doenst get blocked kek)
+Cards Cartel is a high-speed, automated monitoring tool designed to "snipe" undervalued Pokémon card listings from the Magic Eden marketplace. It operates by continuously fetching the latest listings, enriching them with real-time valuation data from ALT.XYZ, and sending instant alerts to a Discord channel for potentially profitable deals.
 
-KEEP it optimized as we are fighting with time here as the cards might get sniped in near about 5 seconds so we need our process to run within 1 secs for one cycle of watch dog (except the first run we'll ignore it as we are populating the DB with older entries)
+The primary goal is to create a robust, 24/7 pipeline that can be deployed on a cloud server (like AWS) for continuous, unattended operation.
 
-## File Functions
+---
 
-    > TIP: In the API call keep Sort by time so we can just populate the DB once and then we can just call it every 0.6 secs if we get a new listing process it, else just wait like a watch-dog kind of shit.    
+## ✨ Features
 
-- `get_data.py` - GET DATA functions LOGIC:
+-   **High-Speed Monitoring:** Checks for new Magic Eden listings every 0.6 seconds.
+-   **Intelligent Filtering:** Filters for specific grading companies (PSA, BGS) and blacklists irrelevant keywords.
+-   **Data Enrichment:** Pulls real-time valuation, population count (supply), and market data from ALT.XYZ for accurate price comparison.
+-   **Price Conversion:** Uses a cached price feed from CoinGecko to convert SOL prices to USDC for consistent value comparison.
+-   **Configurable Snipe Logic:** Business logic is easily adjustable to define what constitutes a "good deal" (e.g., listed at 15%, 20%, or 30% below market value).
+-   **Instant Discord Alerts:** Sends richly formatted, detailed alerts to a designated Discord channel, with role-pinging for high-priority snipes.
+-   **Persistent State:** Uses a local SQLite database to track processed listings, ensuring it doesn't re-process items after a restart.
+-   **Robust & Resilient:** Designed with comprehensive error handling, API call retries, and self-healing loops to withstand network issues and run reliably for long periods.
 
-    - ME API: send the params and get all latest listing in pagination mode if more than 100 (not possible but just in case I dont want it to break when db is empty and we run it for first time we'll get more than 100 so).✅
+---
 
-    - ALT.XYZ SITE: (to search using cert id we need to login, we need to see if we can save some cookies or some shit somewhere so that we can sracpe it easily) scraper and regex to filter the recent 5 transactions (For the recent transactions we'll consider either the 5 transactions or less than 5 but all the transactions we are selecting shall be have been made within a month) ✅
-  
-- `convert_price.py` - Converter
-  - need a function to convert usdc to sol and visa versa and save both values bcoz it can be listed as any
+## 🛠️ Tech Stack
 
-- `discord_alert.py` - Alert 
-  - Send the alert based on the sensitivity of listing
+-   **Language:** Python 3.10+
+-   **Core Libraries:**
+    -   `asyncio` for high-performance, non-blocking I/O.
+    -   `requests` for synchronous API calls in threaded executors.
+    -   `discord.py` for Discord bot integration.
+    -   `PyYAML` for configuration management.
+-   **Database:** `sqlite3` for lightweight, local data persistence.
 
-- `dashboard.py` - Simple Dashboard to show the details
+---
 
-- `save_data.py` - to save the listing in db per listing not all at once bcoz we need to do this quickly as possible.
+## ⚙️ Setup and Installation
 
-- `main.py` - to control the whole pipeline (|| : indicates we can do it parallely)
-    main (run this Forever) =>
-        - `watch_dog()` - Watch dog to scrape ME site every 0.6secs for new listings and save in the db. 
-        watch-dog (Till all latest listing processed under 1 sec (as the listings are quite apart so we'll probably get one listing per 0.6 CALL, but as we are in competition with the other snipers in the market we need to be quick as a egale), ignoring the first run were we'll take more time as we'll get all the listing to populate the db to catup to latest one hahaha) => 
-            get_data ✅ => convert_price 🦾 => save_data 🦾 || check conditions ⚠️ => discord || dashboard 🦾 
-            (complete this loop in under 1 second, bcoz after the first iteration we'll only get 10-20 listing at max)
+1.  **Clone the Repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd cards-cartel-sniper
+    ```
 
-## Details to Display
+2.  **Create a Virtual Environment:**
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    ```
 
-- Dashboard & Discord Embed Message 
-  - CARD DISPLAY Details
-    - Name
-    - Grade
-    - Insured Value
-    - grading company
-    - Avg Price alt
-    - Posted value (difference with % compared to Alt in green)
-    - ME Link
-    - Alt Link (if easy to find)
-    - mint token adress
-    - CC link
-    - IMG
-    - grading_id
-    - token_mint
-    - price it is listed in 
-    - price_sol
-    - price_usdc
+3.  **Install Dependencies:**
+    Create a `requirements.txt` file with the following content:
+    ```
+    requests
+    discord.py
+    python-dotenv
+    PyYAML
+    pytz
+    ```
+    Then, install them:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-## SNIPER LOGIC
+4.  **Configure Environment Variables:**
+    Create a `.env` file in the root directory and populate it with your API keys and IDs. **Never commit this file to Git.**
+    ```env
+    # ALT.XYZ API Credentials
+    AUTH_TOKEN="your_alt_auth_token"
+    COOKIE="your_alt_cookie_string"
 
-- Get the List of all the (status: buy now, trait: category=pokemon) cards/bundles/boxes from ME and their dets and save them in DB
-- For each item we'll process all the list that we got from ME:
+    # Discord Bot Configuration
+    DISCORD_BOT_TOKEN="your_discord_bot_token"
+    DISCORD_CHANNEL_ID="your_target_channel_id"
+    DISCORD_ROLE_ID="role_id_to_ping_on_high_alert"
+    ```
 
-  - if Bundles/ boxes 
-    - Get the mint token address and get insured value from CC
-    - if ME listed price < 25% of insured price (the most imp one) HIGH ALERT 
-        - ALERT PING on DC 
-        - Dashboard update
-    - if ME listed price < 50% of insured price (okish) ALERT
-        - PING on DC 
-        - Dashboard update
-    - if ME listed price < insured price (just to be updated) JUST UPDATE
-        - DC Message 
-        - Dashboard update
+5.  **Configure Logging:**
+    The `logging_config.yaml` file controls the log output. You can adjust the log levels (`INFO`, `DEBUG`, `ERROR`) as needed.
 
-  - Cards
-    - Get the grading id/ cert id from ME and search the exact card on alt.xyz and return recent trnxs and find the avg buy price of it
-    - Also get the insured price from CC just to show it as a param on dc message and dashboard
-    - if ME listed price < 25% of avg price in recent transaction HIGH ALERT 
-        - ALERT PING on DC 
-        - Dashboard update
-    - if ME listed price < 50% of avg price in recent transaction ALERT
-        - PING on DC 
-        - Dashboard update
-    - if ME listed price < avg price in recent transaction JUST UPDATE
-        - DC Message 
-        - Dashboard update
-  
+---
+
+## 🚀 Running the Bot
+
+Once the setup is complete, you can start the sniper bot with a single command:
+
+```bash
+python main.py
+```
+
+The bot will first check if the database exists. If not, it will perform a one-time "initial population" to fetch and process the 100 most recent listings. Afterward, it will start the high-speed watchdog to monitor for new listings.
+
+---
+
+## 📋 To-Do List & Known Issues
+
+This section tracks the current bugs and planned improvements for the bot.
+
+-   [x] **FIXED:** Listings that are not snipes are never updated in the database, causing them to be re-processed on every restart.
+-   [x] **FIXED:** The `database.update_listing` function crashes due to an incorrect number of SQL parameters.
+-   [x] **FIXED:** The Discord bot crashes with a `NameError` when trying to create the embed because `listing_price_usd` is not defined in the correct scope.
+-   [x] **FIXED:** The Discord bot's `asyncio.Queue` can deadlock if a Discord API error occurs, as `queue.task_done()` is not guaranteed to be called.
+-   [x] **FIXED:** The `database.save_listing` function fails with a `TypeError` because it receives a dictionary instead of a list.
+-   [ ] **TODO:** Implement a more sophisticated back-off strategy for when external APIs (Magic Eden, ALT) are down for extended periods.
+-   [ ] **TODO:** Add a command-line argument to force a full re-population of the database.
+-   [ ] **TODO:** Implement the `AUTOBUY` logic when a `GOLD` tier snipe is detected.

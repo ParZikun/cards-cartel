@@ -52,8 +52,8 @@ async def start_discord_bot(queue: asyncio.Queue):
             except Exception as e:
                 print(f"    ❌ An error occurred in the Discord consumer loop: {e}")
             finally:
+                # --- FIX: This ensures the task is marked done no matter what ---
                 queue.task_done()
-
     try:
         await bot.start(BOT_TOKEN)
     except discord.errors.LoginFailure:

@@ -2,9 +2,13 @@ import os
 import requests
 import json
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from collections import defaultdict
+import logging
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
-
 GRAPHQL_URL = "https://alt-platform-server.production.internal.onlyalt.com/graphql/"
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 COOKIE = os.getenv("COOKIE")
@@ -48,14 +52,20 @@ def get_asset_id(cert_id: str):
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"ERROR: API call to get asset_id failed for cert '{cert_id}': {e}")
+        logger.warning(f"API call to get asset_id failed for cert '{cert_id}': {e}")
         return None
 
-def get_asset_details(asset_id: str, grade: str, company: str):
+def get_alt_data(cert_id: str, grade: str, company: str):
     """
-    NEW: Fetches asset details, including Alt Value, confidence, and card populations.
+    Main orchestrator function. Returns a dict with: alt_value, avg_price, supply, and confidence data.
     """
-    query = """
+    asset_id = CERT_ID_TO_ASSET_ID_CACHE.get(cert_id)
+    if not asset_id:
+        asset_id = get_asset_id(cert_id)
+        if not asset_id: return None
+        CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset_id
+    
+    details_query = """
     query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
       asset(id: $id) {
         altValueInfo(tsFilter: $tsFilter) {
@@ -82,27 +92,7 @@ def get_asset_details(asset_id: str, grade: str, company: str):
       __typename
     }
     """
-    payload = {
-        "operationName": "AssetDetails",
-        "variables": {
-            "id": asset_id,
-            "tsFilter": {"gradeNumber": f"{float(grade):.1f}", "gradingCompany": company}
-        },
-        "query": query
-    }
-    try:
-        response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"ERROR: API call to get asset details failed for asset '{asset_id}': {e}")
-        return None
-
-def get_asset_market_transactions(asset_id: str, grade: str, company: str):
-    """
-    Fetches ONLY the recent market transactions for a specific asset using the simplified endpoint.
-    """
-    query = """
+    transactions_query  = """
     query AssetMarketTransactions($id: ID!, $marketTransactionFilter: MarketTransactionFilter!) {
       asset(id: $id) {
         marketTransactions(marketTransactionFilter: $marketTransactionFilter) {
@@ -118,78 +108,75 @@ def get_asset_market_transactions(asset_id: str, grade: str, company: str):
       __typename
     }
     """
-    payload = {
+    details_payload =  {
+        "operationName": "AssetDetails",
+        "variables": {
+            "id": asset_id,
+            "tsFilter": {"gradeNumber": f"{float(grade):.1f}", "gradingCompany": company}
+        },
+        "query": details_query
+    }
+    trans_payload = {
         "operationName": "AssetMarketTransactions",
         "variables": {
             "id": asset_id,
             "marketTransactionFilter": {"gradingCompany": company, "gradeNumber": f"{float(grade):.1f}", "showSkipped": True}
         },
-        "query": query
+        "query": transactions_query
     }
+    
     try:
-        response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        return data.get('data', {}).get('asset', {}).get('marketTransactions', [])
+        details_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=details_payload, timeout=5)
+        details_response.raise_for_status()
+        trans_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=trans_payload, timeout=5)
+        trans_response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"ERROR: API call to get transactions failed for asset '{asset_id}': {e}")
-        return []
-
-def get_alt_data(cert_id: str, grade: str, company: str):
-    """
-    Main orchestrator function. Returns a dict with: alt_value, avg_price, supply, and confidence data.
-    """
-    asset_id = CERT_ID_TO_ASSET_ID_CACHE.get(cert_id)
-    if not asset_id:
-        asset_id = get_asset_id(cert_id)
-        if not asset_id: return None
-        CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset_id
-
-    # --- Step 1: Get Details (Alt Value & Supply) ---
-    details_data = get_asset_details(asset_id, grade, company)
-    if not details_data or not details_data.get('data', {}).get('asset'):
+        logger.error(f"An ALT API call failed for asset {asset_id}: {e}")
         return None
-        
-    asset_data = details_data['data']['asset']
-    alt_value_info = asset_data.get('altValueInfo', {})
-    confidence_data = alt_value_info.get('confidenceData', {})
-    
-    # Extract core values
-    alt_value = alt_value_info.get('currentAltValue', 0.0)
-    lower_bound = confidence_data.get('currentErrorLowerBound', 0.0)
-    upper_bound = confidence_data.get('currentErrorUpperBound', 0.0)
-    confidence = confidence_data.get('currentConfidenceMetric', 0.0)
-    
-    # Extract supply
+
+    details_data = details_response.json().get('data', {}).get('asset', {}) or {}
+    transactions = trans_response.json().get('data', {}).get('asset', {}).get('marketTransactions', [])
+
+    alt_value_info = details_data.get('altValueInfo', {}) or {}
+    confidence_data = alt_value_info.get('confidenceData', {}) or {}
     supply = 0
-    card_pops = asset_data.get('cardPops', [])
+    card_pops = details_data.get('cardPops', [])
     for pop in card_pops:
         if pop.get('gradingCompany') == company and str(pop.get('gradeNumber')) == f"{float(grade):.1f}":
             supply = pop.get('count', 0)
             break
 
-    # --- Step 2: Get Transactions for Avg Price ---
-    transactions = get_asset_market_transactions(asset_id, grade, company)
-
-    # --- Step 3: Calculate Avg Price based on Supply ---
-    num_to_avg = 4 if 0 < supply < 3000 else 10
-    recent_sales = [float(tx['price']) for tx in transactions[:num_to_avg]]
-    avg_price = sum(recent_sales) / len(recent_sales) if recent_sales else 0
+    avg_price = 0.0
+    if supply > 3000:
+        logger.debug("High supply detected. Using 15-day rolling average.")
+        daily_prices, fifteen_days_ago = defaultdict(list), datetime.now() - timedelta(days=15)
+        for tx in transactions:
+            tx_date = datetime.fromisoformat(tx['date'].split('T')[0])
+            if tx_date >= fifteen_days_ago:
+                daily_prices[tx_date.strftime('%Y-%m-%d')].append(float(tx['price']))
+        if daily_prices:
+            daily_averages = [sum(prices) / len(prices) for prices in daily_prices.values()]
+            if daily_averages: avg_price = sum(daily_averages) / len(daily_averages)
+    else:
+        logger.debug("Low supply detected. Using last 4 recent sales.")
+        num_to_avg = 4
+        recent_sales = [float(tx['price']) for tx in transactions[:num_to_avg]]
+        if recent_sales: avg_price = sum(recent_sales) / len(recent_sales)
 
     return {
-        "alt_asset_id": asset_id or None,
-        "alt_value": alt_value or 0.0,
-        "avg_price": avg_price or 0.0,
-        "supply": supply or 0,
-        "lower_bound": lower_bound or 0.0,
-        "upper_bound": upper_bound or 0.0,
-        "confidence": confidence or 0.0
+        "alt_asset_id": asset_id,
+        "alt_value": alt_value_info.get('currentAltValue') or 0.0,
+        "avg_price": avg_price,
+        "supply": supply,
+        "lower_bound": confidence_data.get('currentErrorLowerBound') or 0.0,
+        "upper_bound": confidence_data.get('currentErrorUpperBound') or 0.0,
+        "confidence": confidence_data.get('currentConfidenceMetric') or 0.0
     }
 
 # --- SANITY TEST ---
 if __name__ == "__main__":
-    example_cert_id = "125552008"
-    example_grade = "10"
+    example_cert_id = "114234980"
+    example_grade = "9"
     example_company = "PSA"
     
     print("--- Running Standalone Test ---")
