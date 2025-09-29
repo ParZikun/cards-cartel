@@ -130,10 +130,10 @@ def fetch_initial_listings(limit: int = 100):
     if listings:
         logger.debug(f"Raw ME API response for initial fetch: {len(listings)}")
         for listing in listings:
+            processed_ids.add(listing.get('pdaAddress'))
             processed = _process_listing(listing)
             if processed:
                 initial_listings.append(processed)
-                processed_ids.add(processed['listing_id'])
     return initial_listings, processed_ids
 
 def fetch_new_listings(processed_ids: set):
@@ -162,35 +162,12 @@ def fetch_new_listings(processed_ids: set):
                 processed = _process_listing(listing)
                 if processed:
                     new_listings.append(processed)
+                else:
+                    processed_ids.add(listing_id) # adding the blacklisted cards in the processed ids so that we dont look at them again
             else:
                 break
     
     return list(reversed(new_listings))
-    # new_listings = []
-    
-    # try:
-    #     response = requests.get(base_url, headers=headers, params=params)
-    #     response.raise_for_status()
-    #     listings = response.json()
-        
-    #     for listing in listings:
-    #         listing_id = listing.get('pdaAddress')
-    #         if listing_id and listing_id not in processed_ids:
-    #             # This is a new listing. Process it.
-    #             processed = _process_listing(listing, is_new=True)
-    #             if processed:
-    #                 new_listings.append(processed)
-    #         else:
-    #             # **CRITICAL OPTIMIZATION**
-    #             # Because the API response is sorted by newest, the moment we
-    #             # find a listing we've already seen, we can stop checking.
-    #             break
-    
-    # except requests.exceptions.RequestException as e:
-    #     print(f"❌ An error occurred during new listings fetch: {e}")
-    #     return []
-
-    # return list(reversed(new_listings))
 
 # --- Sanity Check / Example Usage ---
 if __name__ == "__main__":

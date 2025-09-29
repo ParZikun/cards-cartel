@@ -1,0 +1,50 @@
+# Unused Folders 
+cc/
+archive/
+
+# Git and Docker specific files
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+# Python virtual environments and secrets
+.env
+.venv
+venv
+env
+*.pem
+
+# Python cache and compiled files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# Local database file (should not be in the image)
+*.db
+
+# Distribution / packaging artifacts
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+
+# Test and coverage reports
+htmlcov/
+.tox/
+.coverage
+.cache
+.pytest_cache/
+coverage.xml
+
+# IDE and editor settings
+.idea/
+.vscode/
+.spyderproject
+.ropeproject
+
+# Installer logs
+pip-log.txt

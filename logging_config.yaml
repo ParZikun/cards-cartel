@@ -1,0 +1,58 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  # Formatter for the log file - includes timestamp, module name, level, and message
+  detailed:
+    format: '%(asctime)s - %(name)-22s - %(levelname)-8s - %(message)s'
+  # Formatter for the console - simpler for live viewing
+  simple:
+    format: '%(name)-22s - %(levelname)-8s - %(message)s'
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: DEBUG  # Change this to DEBUG to see everything on the console
+    formatter: simple
+    stream: ext://sys.stdout
+
+  file:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG # Always write detailed logs to the file
+    formatter: detailed
+    filename: sniper.log # All logs will be saved here
+    maxBytes: 10485760 # 10MB per file
+    backupCount: 5    # Keep 5 old log files
+    encoding: utf8
+
+# Define loggers for each of our modules
+loggers:
+  __main__:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: no
+  
+  get_magic_eden_data:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: no
+
+  get_alt_data:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: no
+
+  database:
+    level: DEBUG
+    handlers: [console, file]
+    propagate: no
+  
+  discord_bot:
+    level: INFO # Discord logs can be noisy, keep this at INFO
+    handlers: [console, file]
+    propagate: no
+
+# A catch-all for any other libraries that might log things
+root:
+  level: WARNING
+  handlers: [console, file]
