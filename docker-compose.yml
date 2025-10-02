@@ -1,0 +1,20 @@
+version: '1.1'
+
+services:
+  # --- The Sniper Bot Service ---
+  bot:
+    build: ./bot           # Tells Docker to build the image using the Dockerfile in the 'bot/' folder
+    volumes:
+      - ./listings.db:/app/listings.db # Mounts the database file into the container
+    env_file:
+      - ./.env             # Loads your secrets from the .env file
+    restart: always        # Always restarts the bot if it stops
+
+  # --- The new API Service ---
+  api:
+    build: ./api           # Tells Docker to build the image using the Dockerfile in the 'api/' folder
+    ports:
+      - "5000:5000"        # Exposes the API's port 5000 to the outside world
+    volumes:
+      - ./listings.db:/app/listings.db # Mounts the SAME database file, so the API can read it
+    restart: always

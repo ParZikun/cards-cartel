@@ -6,7 +6,7 @@ import logging.config
 import database
 import get_magic_eden_data as me
 import get_alt_data as alt
-import utils
+import utils as utils
 import discord_bot
 from datetime import datetime
 
