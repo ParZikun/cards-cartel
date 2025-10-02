@@ -1,17 +1,25 @@
 import requests
 import json
 import time
-import re
-from datetime import datetime, timezone
 import logging
-import utils
 
+# Initialize a logger for this module
 logger = logging.getLogger(__name__)
 
+# This list can be expanded as needed
 BLACKLISTED_KEYWORDS = ['black star', 'sticker', 'stickers']
+
+# Mimic a real browser request to ensure API access
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Origin': 'https://magiceden.io',
+    'Referer': 'https://magiceden.io/'
+}
 
 def _get_attribute_value(attributes_list: list, target_trait: str):
     """Finds the value for a specific traitType within a list of attributes."""
+    if not attributes_list: return None
     for attribute in attributes_list:
         if attribute.get('trait_type') == target_trait:
             return attribute.get('value')
@@ -19,179 +27,139 @@ def _get_attribute_value(attributes_list: list, target_trait: str):
 
 def _process_listing(listing: dict):
     """
-    Processes a single raw listing from the API into our desired dictionary format.
+    Processes a single raw listing from the /idxv2/ API.
     Returns the processed dictionary or None if it's invalid.
     """
-    token_data = listing.get('token', {})
-    if not token_data: return None
+    if not listing: return None
 
-    attributes = token_data.get('attributes', [])
-
-    # --- Primary Filtering ---
-    company = _get_attribute_value(attributes, "Grading Company")
-    if not company or company.upper() not in ["PSA", "BECKETT", "BGS"]: return None
-    if company.upper() in ["BECKETT", "BGS"]: company = "BGS"
-    
-    token_mint = listing.get('tokenMint')
-    name = ''
-    created_at = None
-    if token_mint:
-        cc_data = utils.get_cc_data(token_mint)
-        if cc_data and cc_data.get('name'):
-            name = cc_data['name']
-            created_at = cc_data.get('created-at')
-        else:
-            # Fallback to ME data if the CC API fails for any reason
-            name = token_data.get('name', "Unknown")
-            created_at = None
-
+    name = listing.get('content', "Unknown")
     for keyword in BLACKLISTED_KEYWORDS:
         if keyword in name.lower():
             logger.debug(f"Skipping blacklisted card: {name}")
             return None
-            
-    # --- Categorization ---
+
+    attributes = listing.get('attributes', [])
+    company = _get_attribute_value(attributes, "Grading Company")
+    if not company or company.upper() not in ["PSA", "BECKETT", "BGS"]: return None
+    if company.upper() in ["BECKETT", "BGS"]: company = "BGS"
+
     category = "Card"
     if name and "Bundle" in name:
         category = "Bundle"
     elif name and "Box" in name:
         category = "Box"
 
-    # --- Data Extraction ---
     grade = _get_attribute_value(attributes, "The Grade")
     cert_id = _get_attribute_value(attributes, "Grading ID")
+    grade_num_str = _get_attribute_value(attributes, "GradeNum")
     insured_value_str = _get_attribute_value(attributes, "Insured Value")
     
-    # Ensure all critical data points are present
+    # --- Professionalization: Added robust type conversion ---
+    try:
+        grade_num = float(grade_num_str) if grade_num_str is not None else 0.0
+        insured_value = float(insured_value_str) if insured_value_str is not None else 0.0
+        price_sol = float(listing.get('price', 0))
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Could not convert numeric value for '{name}'. Error: {e}. Skipping.")
+        return None
+
     if not all([cert_id, name, grade, company]):
+        logger.debug(f"Skipping card with missing critical data: {name}")
         return None
     
-    grade_num = 0.0
-    match = re.search(r'\d+(\.\d+)?', str(grade))
-    if match:
-        try:
-            grade_num = float(match.group(0))
-        except (ValueError, TypeError):
-            pass 
-
-    # Safely convert insured value to float
-    insured_value = 0.0
-    if insured_value_str:
-        try:
-            insured_value = float(insured_value_str.replace(',', ''))
-        except (ValueError, TypeError):
-            pass
+    if price_sol <= 0: return None
 
     return {
-        'listing_id': listing.get('pdaAddress'),
+        'listing_id': listing.get('id'),
         'name': name,
         'grade_num': grade_num,
         'grade': grade,
         'category': category,
         'insured_value': insured_value,
         'grading_company': company,
-        'img_url': listing.get('extra', {}).get('img'),
+        'img_url': listing.get('img'),
         'grading_id': cert_id,
-        'token_mint': token_mint,
-        'price_amount': listing.get('price'),
+        'token_mint': listing.get('mintAddress'),
+        'price_amount': price_sol,
         'price_currency': 'SOL', 
-        'created_at': created_at
+        'listed_at': listing.get('updatedAt'), 
     }
 
-def _fetch_with_retries(url: str, params: dict, headers: dict, retries: int = 3, delay: int = 5):
-    """Handles ME API calls with error handling and retries."""
+def _fetch_with_retries(url: str, params: dict, retries: int = 3, delay: int = 5):
+    """Handles API calls with error handling, retries, and proper logging."""
     for i in range(retries):
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response = requests.get(url, headers=HEADERS, params=params, timeout=10)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            return data.get('results', [])
         except requests.exceptions.RequestException as e:
-            logger.error(f"ME API connection error ({i+1}/{retries}): {e}")
+            # --- Professionalization: Changed print to logger.warning ---
+            logger.warning(f"ME API connection error (attempt {i+1}/{retries}): {e}")
             time.sleep(delay)
-    logger.critical("ME API fetch failed after multiple retries.")
+    # --- Professionalization: Changed print to logger.critical ---
+    logger.critical("ME API fetch failed after multiple retries. The service may be down.")
     return None
 
-def fetch_initial_listings(limit: int = 100):
-    """
-    Fetches a specific number of the most recent listings for initial DB population.
-    """
-    logger.info(f"Fetching latest {limit} listings to populate database...")
-    collection_symbol = "collector_crypt"
-    base_url = f"https://api-mainnet.magiceden.dev/v2/collections/{collection_symbol}/listings"
-    headers = {"accept": "application/json"}
-    params = {
-        'offset': 0, 'limit': limit, 'sort': 'updatedAt', 'sort_direction': 'desc',
-        'attributes': json.dumps([[{"traitType": "Category", "value": "Pokemon"}]])
-    }
-    initial_listings = []
-    processed_ids = set()
-
-    listings = _fetch_with_retries(base_url, params, headers)
-    if listings:
-        logger.debug(f"Raw ME API response for initial fetch: {len(listings)}")
-        for listing in listings:
-            processed_ids.add(listing.get('pdaAddress'))
-            processed = _process_listing(listing)
-            if processed:
-                initial_listings.append(processed)
-    return initial_listings, processed_ids
-
-def fetch_new_listings(processed_ids: set):
-    """
-    Fetches the most recent listings sorted by update time and intelligently
-    filters out any that have already been processed.
-    """
-    collection_symbol = "collector_crypt"
-    base_url = f"https://api-mainnet.magiceden.dev/v2/collections/{collection_symbol}/listings"
-    headers = {"accept": "application/json"}
+def _fetch_listings(processed_ids: set | None, limit: int = 100):
+    """Unified fetch function for the new API."""
+    base_url = "https://api-mainnet.magiceden.us/idxv2/getListedNftsByCollectionSymbol"
     
     params = {
-        'offset': 0,
-        'limit': 100, # Fetch the max allowed to ensure we see all new items
-        'sort': 'updatedAt',
-        'sort_direction': 'desc',
-        'attributes': json.dumps([[{"traitType": "Category", "value": "Pokemon"}]])
+        'collectionSymbol': 'collector_crypt',
+        'limit': limit,
+        'direction': 1, # Your logic: Sort Ascending (Oldest First)
+        'field': 2,     # Your logic: Sort by listing time
+        'attributes': json.dumps([
+            {"attributes": [{"traitType": "Category", "value": "Pokemon"}]},
+            {"attributes": [
+                {"traitType": "Grading Company", "value": "PSA"},
+                {"traitType": "Grading Company", "value": "Beckett"},
+                {"traitType": "Grading Company", "value": "BGS"}
+            ]}
+        ]),
+        'token22StandardFilter': 1,
+        'mplCoreStandardFilter': 1,
+        'mode': 'all',
+        'agg': 3,
+        'compressionMode': 'both'
     }
+    
     new_listings = []
-    listings = _fetch_with_retries(base_url, params, headers)
+    raw_listings = _fetch_with_retries(base_url, params)
     
-    if listings:
-        for listing in listings:
-            listing_id = listing.get('pdaAddress')
+    if not raw_listings:
+        return new_listings
+    
+    for listing in raw_listings:
+        listing_id = listing.get('id')
+        
+        if processed_ids is not None:
             if listing_id and listing_id not in processed_ids:
                 processed = _process_listing(listing)
                 if processed:
                     new_listings.append(processed)
                 else:
-                    processed_ids.add(listing_id) # adding the blacklisted cards in the processed ids so that we dont look at them again
+                    processed_ids.add(listing_id)
             else:
+                # This is a useful debug log to show the optimization is working
+                # logger.debug(f"Stopping search: Hit previously processed ID {listing_id}")
                 break
-    
-    return list(reversed(new_listings))
+        else: # This block is for initial population
+            processed = _process_listing(listing)
+            if processed:
+                new_listings.append(processed)
+                
+    return new_listings
 
-# --- Sanity Check / Example Usage ---
-if __name__ == "__main__":
-    
-    # 1. On the very first run, populate everything
-    # all_listings, processed_ids_set = fetch_all_listings()
-    all_listings, processed_ids_set = fetch_initial_listings()
-    print(f"\n✅ Initial population complete. Found {len(all_listings)} listings.")
-    print(f"Total unique listing IDs stored: {len(processed_ids_set)}")
+def fetch_initial_listings(limit: int = 100):
+    """Fetches a specific number of recent listings for initial DB population."""
+    # --- Professionalization: Changed print to logger.info ---
+    logger.info(f"Fetching latest {limit} listings to populate database...")
+    initial_listings = _fetch_listings(None, limit=limit)
+    processed_ids = {listing['listing_id'] for listing in initial_listings if listing and listing.get('listing_id')}
+    return initial_listings, processed_ids
 
-    # 2. Simulate the watchdog loop
-    print("\n--- Simulating Watchdog (running 3 checks) ---")
-    for i in range(3):
-        print(f"\n[Watchdog Check #{i+1}]")
-        new_items = fetch_new_listings(processed_ids_set)
-        
-        if new_items:
-            print(f"🔥 Found {len(new_items)} new items!")
-            for item in new_items:
-                print(f"  -> Processing: {item['name']} ({item['listing_id']})")
-                processed_ids_set.add(item['listing_id'])
-            print(f"Total processed IDs is now: {len(processed_ids_set)}")
-        else:
-            print("✅ No new listings found.")
-        
-        if i < 2: # Don't sleep on the last iteration
-             time.sleep(2)
+def fetch_new_listings(processed_ids: set):
+    """Fetches the most recent listings and filters out any already processed."""
+    return _fetch_listings(processed_ids=processed_ids, limit=100)

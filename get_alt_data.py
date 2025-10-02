@@ -1,6 +1,6 @@
 import os
 import requests
-import json
+import time
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -28,7 +28,7 @@ HEADERS = {
 
 CERT_ID_TO_ASSET_ID_CACHE = {}
 
-def get_asset_id(cert_id: str):
+def get_asset_id(cert_id: str, retries: int = 3, delay: int = 2):
     """
     Looks up an asset's internal ID using its certification number.
     This is the crucial mapping function.
@@ -38,24 +38,28 @@ def get_asset_id(cert_id: str):
         "variables": {"certNumber": cert_id},
         "query": "query Cert($certNumber: String!) { cert(certNumber: $certNumber) { asset { id name __typename } __typename } }"
     }
-    
-    try:
-        response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        
-        asset = data.get('data', {}).get('cert', {}).get('asset')
-        if asset and 'id' in asset:
-            return asset['id']
-        else:
-            print(f"WARN: Cert ID '{cert_id}' not found on ALT.")
-            return None
+    for attempt in range(retries):
+        try:
+            response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload, timeout=5)
+            response.raise_for_status()
+            data = response.json()
             
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"API call to get asset_id failed for cert '{cert_id}': {e}")
-        return None
+            asset = data.get('data', {}).get('cert', {}).get('asset')
+            if asset and 'id' in asset:
+                return asset['id']
+            else:
+                logger.warning(f"Cert ID '{cert_id}' not found on ALT. This is not an error.")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"ALT API call (get_asset_id) failed for cert '{cert_id}' on attempt {attempt + 1}: {e}")
+            if attempt < retries - 1:
+                time.sleep(delay)
 
-def get_alt_data(cert_id: str, grade: str, company: str):
+    logger.error(f"Failed to get asset_id for cert '{cert_id}' after {retries} attempts.")
+    return None
+
+def get_alt_data(cert_id: str, grade: str, company: str, retries: int = 3, delay: int = 3):
     """
     Main orchestrator function. Returns a dict with: alt_value, avg_price, supply, and confidence data.
     """
@@ -125,53 +129,55 @@ def get_alt_data(cert_id: str, grade: str, company: str):
         "query": transactions_query
     }
     
-    try:
-        details_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=details_payload, timeout=5)
-        details_response.raise_for_status()
-        trans_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=trans_payload, timeout=5)
-        trans_response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"An ALT API call failed for asset {asset_id}: {e}")
-        return None
+    for attempt in range(retries):
+        try:
+            details_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=details_payload, timeout=5)
+            details_response.raise_for_status()
+            trans_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=trans_payload, timeout=5)
+            trans_response.raise_for_status()
 
-    details_data = details_response.json().get('data', {}).get('asset', {}) or {}
-    transactions = trans_response.json().get('data', {}).get('asset', {}).get('marketTransactions', [])
+            details_data = details_response.json().get('data', {}).get('asset', {}) or {}
+            transactions = trans_response.json().get('data', {}).get('asset', {}).get('marketTransactions', [])
 
-    alt_value_info = details_data.get('altValueInfo', {}) or {}
-    confidence_data = alt_value_info.get('confidenceData', {}) or {}
-    supply = 0
-    card_pops = details_data.get('cardPops', [])
-    for pop in card_pops:
-        if pop.get('gradingCompany') == company and str(pop.get('gradeNumber')) == f"{float(grade):.1f}":
-            supply = pop.get('count', 0)
-            break
+            alt_value_info = details_data.get('altValueInfo', {}) or {}
+            confidence_data = alt_value_info.get('confidenceData', {}) or {}
+            supply = 0
+            card_pops = details_data.get('cardPops', [])
+            for pop in card_pops:
+                if pop.get('gradingCompany') == company and str(pop.get('gradeNumber')) == f"{float(grade):.1f}":
+                    supply = pop.get('count', 0)
+                    break
 
-    avg_price = 0.0
-    if supply > 3000:
-        logger.debug("High supply detected. Using 15-day rolling average.")
-        daily_prices, fifteen_days_ago = defaultdict(list), datetime.now() - timedelta(days=15)
-        for tx in transactions:
-            tx_date = datetime.fromisoformat(tx['date'].split('T')[0])
-            if tx_date >= fifteen_days_ago:
-                daily_prices[tx_date.strftime('%Y-%m-%d')].append(float(tx['price']))
-        if daily_prices:
-            daily_averages = [sum(prices) / len(prices) for prices in daily_prices.values()]
-            if daily_averages: avg_price = sum(daily_averages) / len(daily_averages)
-    else:
-        logger.debug("Low supply detected. Using last 4 recent sales.")
-        num_to_avg = 4
-        recent_sales = [float(tx['price']) for tx in transactions[:num_to_avg]]
-        if recent_sales: avg_price = sum(recent_sales) / len(recent_sales)
+            avg_price = 0.0
+            if supply > 3000:
+                logger.debug("High supply detected. Using 15-day rolling average.")
+                daily_prices, fifteen_days_ago = defaultdict(list), datetime.now() - timedelta(days=15)
+                for tx in transactions:
+                    tx_date = datetime.fromisoformat(tx['date'].split('T')[0])
+                    if tx_date >= fifteen_days_ago:
+                        daily_prices[tx_date.strftime('%Y-%m-%d')].append(float(tx['price']))
+                if daily_prices:
+                    daily_averages = [sum(prices) / len(prices) for prices in daily_prices.values()]
+                    if daily_averages: avg_price = sum(daily_averages) / len(daily_averages)
+            else:
+                logger.debug("Low supply detected. Using last 4 recent sales.")
+                num_to_avg = 4
+                recent_sales = [float(tx['price']) for tx in transactions[:num_to_avg]]
+                if recent_sales: avg_price = sum(recent_sales) / len(recent_sales)
 
-    return {
-        "alt_asset_id": asset_id,
-        "alt_value": alt_value_info.get('currentAltValue') or 0.0,
-        "avg_price": avg_price,
-        "supply": supply,
-        "lower_bound": confidence_data.get('currentErrorLowerBound') or 0.0,
-        "upper_bound": confidence_data.get('currentErrorUpperBound') or 0.0,
-        "confidence": confidence_data.get('currentConfidenceMetric') or 0.0
-    }
+            return {
+                "alt_asset_id": asset_id,
+                "alt_value": alt_value_info.get('currentAltValue') or 0.0,
+                "avg_price": avg_price,
+                "supply": supply,
+                "lower_bound": confidence_data.get('currentErrorLowerBound') or 0.0,
+                "upper_bound": confidence_data.get('currentErrorUpperBound') or 0.0,
+                "confidence": confidence_data.get('currentConfidenceMetric') or 0.0
+            }
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1}: {e}")
+            if attempt < retries - 1:
+                time.sleep(delay)
 
 # --- SANITY TEST ---
 if __name__ == "__main__":

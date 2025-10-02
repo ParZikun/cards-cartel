@@ -31,7 +31,7 @@ def init_db():
         token_mint TEXT,
         price_amount REAL,
         price_currency TEXT,
-        created_at TEXT,
+        listed_at TEXT,
         alt_value REAL,
         avg_price REAL,
         supply INTEGER,
@@ -55,12 +55,12 @@ def save_listing(listings: list):
         listing.get('grade_num'), listing.get('category'), listing.get('insured_value'),
         listing.get('grading_company'), listing.get('img_url'), listing.get('grading_id'),
         listing.get('token_mint'), listing.get('price_amount'), listing.get('price_currency'),
-        listing.get('created_at')
+        listing.get('listed_at')
     ) for listing in listings]
     cursor.executemany("""
     INSERT OR IGNORE INTO listings (
         listing_id, name, grade, grade_num, category, insured_value, grading_company,
-        img_url, grading_id, token_mint, price_amount, price_currency, created_at
+        img_url, grading_id, token_mint, price_amount, price_currency, listed_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, data_to_insert)
     conn.commit()

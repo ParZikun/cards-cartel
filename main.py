@@ -8,6 +8,7 @@ import get_magic_eden_data as me
 import get_alt_data as alt
 import utils
 import discord_bot
+from datetime import datetime
 
 # --- Setup Logging ---
 with open('logging_config.yaml', 'r') as f:
@@ -106,11 +107,17 @@ async def watchdog(queue: asyncio.Queue):
     processed_ids = await asyncio.to_thread(database.get_all_listing_ids)
     logger.info(f"Loaded {len(processed_ids)} previously processed listing IDs.")
     loop = asyncio.get_running_loop()
-
+    status_line = "" # Initialize to avoid errors
     while True:
         try:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            status_line = f" Watchdog is live | Last poll at: {timestamp} "
+            # Use print with '\r' to overwrite the line and flush=True to force immediate display
+            print(status_line, end='\r', flush=True)
+
             new_listings = await loop.run_in_executor(None, me.fetch_new_listings, processed_ids)
             if new_listings:
+                print(" " * len(status_line), end='\r', flush=True)
                 logger.info(f"Found {len(new_listings)} new items!")
                 tasks = []
                 for listing in new_listings:
@@ -118,7 +125,7 @@ async def watchdog(queue: asyncio.Queue):
                     await asyncio.to_thread(database.save_listing, [listing])
                     tasks.append(process_listing(listing, queue, send_alert=True))
                 await asyncio.gather(*tasks)
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.3)
         except Exception as e:
             logger.critical(f"Unexpected error in watchdog loop: {e}", exc_info=True)
             await asyncio.sleep(10)

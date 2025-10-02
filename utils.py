@@ -3,6 +3,7 @@ import time
 import requests
 import time
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -56,49 +57,12 @@ def get_price_in_both_currencies(amount: float, currency: str):
         return {'price_sol': amount / _cached_sol_price, 'price_usdc': amount}
     return None
 
-def get_cc_data(token_mint: str):
-    """
-    Fetches the full card name and insured value from the Collector Crypt API.
-    """
-    if not token_mint: return None
-    url = f"https://api.collectorcrypt.com/cards/publicNft/{token_mint}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0',
-        'Accept': 'application/json, text/plain, */*',
-        'Referer': 'https://collectorcrypt.com/',
-        'Origin': 'https://collectorcrypt.com'
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        
-        return {
-            'name': data.get('itemName'),
-            'created-at': data.get('createdAt')
-        }
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Could not fetch Collector Crypt API data for mint {token_mint}: {e}")
-        return None
+def convert_utc_to_cdt(utc_time_str):
+    # Convert UTC time string to a datetime object
+    utc_time = datetime.strptime(utc_time_str, "%Y-%m-%dT%H:%M:%S.%fZ")
     
-# --- Example Usage ---
-if __name__ == "__main__":
-    data  = get_cc_data('HXaqbDSXmdwzPW9c2GR1uvEGJUSDPCF6BxJojLaU3rvb')
-    print(data)
-    print("--- Testing Price Conversion Utility with Caching ---")
+    # Subtract 5 hours to convert to CDT
+    cdt_time = utc_time - timedelta(hours=5)
     
-    # First call: Should fetch from the API
-    print("\n[First Call]")
-    prices1 = get_price_in_both_currencies(2.5, 'SOL')
-    if prices1:
-        print(f"  -> 2.5 SOL is worth ${prices1['price_usdc']:.2f}")
-
-    # Second call: Should use the cache instantly
-    print("\n[Second Call (should be instant)]")
-    time.sleep(2) # Wait 2 seconds
-    prices2 = get_price_in_both_currencies(150, 'USDC')
-    if prices2:
-        print(f"  -> $150 USDC is worth {prices2['price_sol']:.4f} SOL")
-
-    print("\nCache will automatically refresh after 5 minutes on the next call.")
-
+    # Return the time in the format "dd/mm/yyyy at hh:mm:ss"
+    return cdt_time.strftime("%d/%m/%Y at %H:%M:%S")
