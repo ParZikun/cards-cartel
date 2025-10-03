@@ -1,20 +1,26 @@
-version: '1.1'
+# The 'version' key has been removed as it's obsolete.
 
 services:
   # --- The Sniper Bot Service ---
   bot:
-    build: ./bot           # Tells Docker to build the image using the Dockerfile in the 'bot/' folder
+    build: ./bot
+    container_name: sniper-bot    # Added for easy reference (e.g., 'docker logs sniper-bot')
     volumes:
-      - ./listings.db:/app/listings.db # Mounts the database file into the container
+      - ./data:/app/data
     env_file:
-      - ./.env             # Loads your secrets from the .env file
-    restart: always        # Always restarts the bot if it stops
+      - ./.env
+    restart: always
 
-  # --- The new API Service ---
+  # --- The API Service ---
   api:
-    build: ./api           # Tells Docker to build the image using the Dockerfile in the 'api/' folder
+    build: ./api
+    container_name: sniper-api    # Added for easy reference
     ports:
-      - "5000:5000"        # Exposes the API's port 5000 to the outside world
+      - "5000:5000"
     volumes:
-      - ./listings.db:/app/listings.db # Mounts the SAME database file, so the API can read it
+      - ./data:/app/data
+    env_file:
+      - ./.env
+    depends_on:                   # Ensures the 'bot' service is created before the 'api'
+      - bot
     restart: always

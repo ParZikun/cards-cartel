@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-DB_FILE = "listings.db"
+DB_FILE = "data/listings.db"
 
 def init_db():
     """
