@@ -93,13 +93,13 @@ The bot will first check if the database exists. If not, it will perform a one-t
 
 This section tracks the current bugs and planned improvements for the bot.
 
--   [x] **FIXED:** Listings that are not snipes are never updated in the database, causing them to be re-processed on every restart.
--   [x] **FIXED:** The `database.update_listing` function crashes due to an incorrect number of SQL parameters.
--   [x] **FIXED:** The Discord bot crashes with a `NameError` when trying to create the embed because `listing_price_usd` is not defined in the correct scope.
--   [x] **FIXED:** The Discord bot's `asyncio.Queue` can deadlock if a Discord API error occurs, as `queue.task_done()` is not guaranteed to be called.
--   [x] **FIXED:** The `database.save_listing` function fails with a `TypeError` because it receives a dictionary instead of a list.
--   [ ] **TODO:** Implement a more sophisticated back-off strategy for when external APIs (Magic Eden, ALT) are down for extended periods.
--   [ ] **TODO:** Add a command-line argument to force a full re-population of the database.
--   [ ] **TODO:** Implement the `AUTOBUY` logic when a `GOLD` tier snipe is detected.
--   [ ] **NEXT:** Need to create a restful api to get the data of the database and also need a dashboard to show that data lol
--   [ ] **NEXT:** Also set up alerts, monitoring and analytics n shit on azure too
+-   [ ] Implement a more sophisticated back-off strategy for when external APIs (Magic Eden, ALT) are down for extended periods.
+-   [ ] Add a command-line argument to force a full re-population of the database.
+-   [ ] Implement the `AUTOBUY` logic when a `GOLD` tier snipe is detected.
+-   [ ] Also set up alerts, monitoring and analytics n shit on azure too
+-   [ ] Frontend dashboard
+-   [ ] do we need to gib alerts on the dashboard
+-   [ ] do we need to round off the difference percentage ??
+-   [ ] We can even send alerts on email kek 
+-   [ ] Wallet connect for autobuy and a common slider for setting priority and fees for aping quickly 
+-   [ ] Update the UI kek Suprise bitches
