@@ -22,8 +22,8 @@ module.exports = {
         },
       },
       fontFamily: {
-        pixel: ['"Press Start 2P"', 'cursive'],
-        mono: ['"VT323"', 'monospace'],
+        pixel: ['var(--font-press-start-2p)', 'cursive'],
+        mono: ['var(--font-ibm-plex-mono)', 'monospace'],
       },
       backdropBlur: {
         xs: '2px',

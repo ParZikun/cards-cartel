@@ -1,8 +1,8 @@
 'use client'
 
-import { Zap, Wallet } from 'lucide-react'
+import { Zap, Wallet, Menu } from 'lucide-react'
 
-export default function Header({ apiStatus, lastUpdated }) {
+export default function Header({ apiStatus, lastUpdated, onMenuClick }) {
   const statusIndicator = () => {
     switch (apiStatus) {
       case 'live':
@@ -20,6 +20,9 @@ export default function Header({ apiStatus, lastUpdated }) {
         <div className="flex items-center justify-between h-20">
           {/* Logo and Title */}
           <div className="flex items-center space-x-4">
+            <button className="lg:hidden text-primary-text/80 hover:text-accent-gold" onClick={onMenuClick}>
+              <Menu className="w-7 h-7" />
+            </button>
             <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-accent-gold/10 border border-accent-gold/30">
               <Zap className="w-7 h-7 text-accent-gold" />
             </div>

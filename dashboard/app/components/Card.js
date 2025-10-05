@@ -1,4 +1,3 @@
-
 import Image from 'next/image'
 import { WalletCards, TrendingDown, Tag, BarChart4, Copy, Zap } from 'lucide-react';
 
@@ -27,9 +26,10 @@ const timeAgo = (dateString) => {
 
 const getAltConfidenceColor = (confidence) => {
     if (confidence === null || confidence === undefined) return 'text-gray-400';
-    if (confidence > 75) return 'text-yellow-300';
-    if (confidence > 40) return 'text-orange-400';
-    return 'text-red-500';
+    if (confidence >= 75) return 'text-green-400';
+    if (confidence >= 60) return 'text-orange-400';
+    if (confidence < 35) return 'text-red-500';
+    return 'text-gray-400';
 }
 
 const getDifferenceColor = (category) => {
@@ -107,9 +107,12 @@ export default function Card({ listing, solPriceUSD, priority }) {
                         <p className="text-xs text-gray-500">{timeAgo(listing.listed_at)}</p>
                     </div>
                     <div className="flex gap-2 mt-2">
-                        <button className="buy-now-btn flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-black text-sm font-bold py-2 px-3 rounded-md transition-colors duration-200">
+                        <button 
+                            className="buy-now-btn flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-black text-sm font-bold py-2 px-3 rounded-md transition-colors duration-200 disabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={!listing.listed}
+                        >
                             <Zap className="w-4 h-4" />
-                            <span>Buy Now</span>
+                            <span>{listing.listed ? 'Buy Now' : 'Sold'}</span>
                         </button>
                         <a href={`https://magiceden.io/item-details/${listing.token_mint}`} target="_blank" className="flex-1 flex items-center justify-center gap-2 text-center bg-sky-500/20 hover:bg-sky-500/40 text-sky-300 text-sm font-bold py-2 px-3 rounded-md transition-colors duration-200">
                             <Image src="https://cdn.prod.website-files.com/614c99cf4f23700c8aa3752a/637db1043720a3ea88e4ea96_public.png" width={20} height={20} className="object-contain" alt="Magic Eden Logo" />
