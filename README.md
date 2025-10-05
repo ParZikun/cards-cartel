@@ -1,105 +1,144 @@
-# 🃏 Cards Cartel Sniper
+# 🎯 Cartel Pro Sniper Bot Dashboard
 
-Cards Cartel is a high-speed, automated monitoring tool designed to "snipe" undervalued Pokémon card listings from the Magic Eden marketplace. It operates by continuously fetching the latest listings, enriching them with real-time valuation data from ALT.XYZ, and sending instant alerts to a Discord channel for potentially profitable deals.
-
-The primary goal is to create a robust, 24/7 pipeline that can be deployed on a cloud server (like AWS) for continuous, unattended operation.
-
----
+A professional, dark-themed NFT sniper bot dashboard built with Next.js 14, featuring a futuristic Pokémon-inspired design with glassmorphism effects and responsive layout.
 
 ## ✨ Features
 
--   **High-Speed Monitoring:** Checks for new Magic Eden listings every 0.6 seconds.
--   **Intelligent Filtering:** Filters for specific grading companies (PSA, BGS) and blacklists irrelevant keywords.
--   **Data Enrichment:** Pulls real-time valuation, population count (supply), and market data from ALT.XYZ for accurate price comparison.
--   **Price Conversion:** Uses a cached price feed from CoinGecko to convert SOL prices to USDC for consistent value comparison.
--   **Configurable Snipe Logic:** Business logic is easily adjustable to define what constitutes a "good deal" (e.g., listed at 15%, 20%, or 30% below market value).
--   **Instant Discord Alerts:** Sends richly formatted, detailed alerts to a designated Discord channel, with role-pinging for high-priority snipes.
--   **Persistent State:** Uses a local SQLite database to track processed listings, ensuring it doesn't re-process items after a restart.
--   **Robust & Resilient:** Designed with comprehensive error handling, API call retries, and self-healing loops to withstand network issues and run reliably for long periods.
+- **Dark Futuristic Theme**: Near-black background with gold accents and animated gradients
+- **Pokémon-Inspired Design**: Pixel fonts and retro gaming aesthetics
+- **Glassmorphism Effects**: Modern glass-like UI elements with backdrop blur
+- **Responsive Design**: Mobile-first approach with adaptive grid layouts
+- **Component Architecture**: Clean, reusable React components
+- **Animated Background**: Subtle hexagon patterns and floating gradients
+- **Interactive Elements**: Hover effects, glow animations, and smooth transitions
 
----
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Node.js 18+ 
+- npm or yarn
+
+### Installation
+
+1. **Clone or download the project files**
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Run the development server**:
+   ```bash
+   npm run dev
+   ```
+
+4. **Open [http://localhost:3000](http://localhost:3000)** in your browser
+
+## 🎨 Design System
+
+### Color Palette
+- **Primary Background**: `#0c0a15` (Near-black)
+- **Secondary Text**: `#E2E8F0` (Light gray)
+- **Accent Gold**: `#FFD700` (Rich gold)
+- **Status Colors**:
+  - Red: `#EF4444` (Alerts/Good deals)
+  - Blue: `#3B82F6` (Info deals)
+  - Green: `#22C55E` (Success states)
+
+### Typography
+- **Primary Font**: Press Start 2P (Pixel font for headings)
+- **Secondary Font**: VT323 (Pixel font for body text)
+
+## 🏗️ Project Structure
+
+```
+app/
+├── components/
+│   ├── Header.js          # Sticky header with glassmorphism
+│   ├── Footer.js          # Simple footer with copyright
+│   ├── SearchBar.js       # Search input with icon
+│   ├── FilterControls.js  # Filter and sort dropdowns
+│   ├── Card.js           # Individual NFT card component
+│   └── ListingGrid.js    # Responsive grid layout
+├── styles/
+│   └── globals.css       # Global styles and animations
+├── layout.js            # Root layout with fonts
+└── page.js             # Main dashboard page
+```
 
 ## 🛠️ Tech Stack
 
--   **Language:** Python 3.10+
--   **Core Libraries:**
-    -   `asyncio` for high-performance, non-blocking I/O.
-    -   `requests` for synchronous API calls in threaded executors.
-    -   `discord.py` for Discord bot integration.
-    -   `PyYAML` for configuration management.
--   **Database:** `sqlite3` for lightweight, local data persistence.
+- **Framework**: Next.js 14 (App Router)
+- **Language**: JavaScript (ES6+)
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Fonts**: Google Fonts (Press Start 2P, VT323)
+
+## 📱 Responsive Breakpoints
+
+- **Mobile**: 2 columns (grid-cols-2)
+- **Small**: 3 columns (sm:grid-cols-3)
+- **Medium**: 4 columns (md:grid-cols-4)
+- **Large**: 5 columns (lg:grid-cols-5)
+
+## 🎯 Components Overview
+
+### Header
+- Sticky positioning with glassmorphism effect
+- Logo with lightning bolt icon
+- "Connect Wallet" button with hover effects
+
+### SearchBar
+- Full-width search input
+- Search icon and live indicator
+- Gold focus ring and glow effects
+
+### FilterControls
+- Filter dropdown (Show All, Autobuy, Alert, Info)
+- Sort dropdown (Listed Time, Price, Difference %, Rarity)
+- Responsive layout
+
+### Card
+- 3:4 aspect ratio placeholder images
+- Hover effects with scale and glow
+- Status indicators and price information
+- Gradient overlays
+
+### ListingGrid
+- Responsive CSS Grid layout
+- Loading indicator with animated dots
+- 12 placeholder cards
+
+## 🎨 Custom CSS Classes
+
+- `.glass` - Glassmorphism effect
+- `.glass-strong` - Stronger glassmorphism
+- `.glow-gold` - Gold glow effect
+- `.pixel-text` - Pixel font rendering optimization
+
+## 🚀 Deployment
+
+This project is optimized for Vercel deployment:
+
+1. Push to GitHub
+2. Connect to Vercel
+3. Deploy automatically
+
+## 🔮 Future Enhancements
+
+- [ ] Real-time NFT data integration
+- [ ] Wallet connection functionality
+- [ ] Advanced filtering and sorting
+- [ ] User authentication
+- [ ] Settings and preferences
+- [ ] Real-time notifications
+- [ ] Dark/light theme toggle
+
+## 📄 License
+
+Copyright © 2025 | Developed with ❤️ by ParZi
 
 ---
 
-## ⚙️ Setup and Installation
-
-1.  **Clone the Repository:**
-    ```bash
-    git clone <your-repo-url>
-    cd cards-cartel-sniper
-    ```
-
-2.  **Create a Virtual Environment:**
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
-
-3.  **Install Dependencies:**
-    Create a `requirements.txt` file with the following content:
-    ```
-    requests
-    discord.py
-    python-dotenv
-    PyYAML
-    pytz
-    ```
-    Then, install them:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  **Configure Environment Variables:**
-    Create a `.env` file in the root directory and populate it with your API keys and IDs. **Never commit this file to Git.**
-    ```env
-    # ALT.XYZ API Credentials
-    AUTH_TOKEN="your_alt_auth_token"
-    COOKIE="your_alt_cookie_string"
-
-    # Discord Bot Configuration
-    DISCORD_BOT_TOKEN="your_discord_bot_token"
-    DISCORD_CHANNEL_ID="your_target_channel_id"
-    DISCORD_ROLE_ID="role_id_to_ping_on_high_alert"
-    ```
-
-5.  **Configure Logging:**
-    The `logging_config.yaml` file controls the log output. You can adjust the log levels (`INFO`, `DEBUG`, `ERROR`) as needed.
-
----
-
-## 🚀 Running the Bot
-
-Once the setup is complete, you can start the sniper bot with a single command:
-
-```bash
-python main.py
-```
-
-The bot will first check if the database exists. If not, it will perform a one-time "initial population" to fetch and process the 100 most recent listings. Afterward, it will start the high-speed watchdog to monitor for new listings.
-
----
-
-## 📋 To-Do List & Known Issues
-
-This section tracks the current bugs and planned improvements for the bot.
-
--   [ ] Implement a more sophisticated back-off strategy for when external APIs (Magic Eden, ALT) are down for extended periods.
--   [ ] Add a command-line argument to force a full re-population of the database.
--   [ ] Implement the `AUTOBUY` logic when a `GOLD` tier snipe is detected.
--   [ ] Also set up alerts, monitoring and analytics n shit on azure too
--   [ ] Frontend dashboard
--   [ ] do we need to gib alerts on the dashboard
--   [ ] do we need to round off the difference percentage ??
--   [ ] We can even send alerts on email kek 
--   [ ] Wallet connect for autobuy and a common slider for setting priority and fees for aping quickly 
--   [ ] Update the UI kek Suprise bitches
+**Note**: This is a UI foundation project. No actual trading functionality is implemented.
