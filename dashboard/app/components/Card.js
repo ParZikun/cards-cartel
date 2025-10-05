@@ -5,7 +5,7 @@ export default function Card({ index = 1 }) {
     <div className="card-glow rounded-lg overflow-hidden bg-primary-bg/40 aspect-[3/4] group">
       <div className="relative w-full h-full">
         <Image
-          src={`https://placehold.co/300x420/0c0a15/2d3748?text=Card+${index}`}
+          src={`https://placehold.co/300x420.png`}
           alt={`Placeholder card ${index}`}
           fill
           className="object-cover transition-transform duration-300 group-hover:scale-105"
