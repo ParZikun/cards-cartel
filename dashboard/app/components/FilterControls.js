@@ -1,42 +1,45 @@
 'use client'
 
-import { useState } from 'react'
+import { List, Zap, Siren, Info } from 'lucide-react'
 
-export default function FilterControls() {
-  const [filter, setFilter] = useState('all')
-  const [sort, setSort] = useState('listed-time')
+export default function FilterControls({ filterValue, onFilterChange, sortValue, onSortChange }) {
+  const filterOptions = [
+    { value: 'all', label: 'Show All', icon: List },
+    { value: 'autobuy', label: 'Autobuy', icon: Zap },
+    { value: 'alert', label: 'Alert', icon: Siren },
+    { value: 'info', label: 'Info', icon: Info },
+  ];
 
   return (
-    <div className="w-full max-w-4xl mx-auto mb-8">
-      <div className="flex flex-col sm:flex-row gap-4 sm:gap-8">
-        {/* Filter Dropdown */}
-        <div className="flex-1">
-          <label className="block text-pixel text-pixel-xs text-accent-gold mb-2">
+    <div class="w-full max-w-4xl mx-auto mb-8">
+      <div class="flex flex-col sm:flex-row gap-4 sm:gap-8">
+        {/* Filter Buttons */}
+        <div class="flex-1">
+          <label class="block text-pixel text-pixel-xs text-accent-gold mb-2">
             Filter by:
           </label>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-full px-4 py-3 bg-primary-bg/60 border border-accent-gold/30 rounded-lg
-                     text-mono text-base text-primary-text focus-gold
-                     focus:border-accent-gold focus:bg-primary-bg/80 transition-all duration-300"
-          >
-            <option value="all">Show All</option>
-            <option value="autobuy">Autobuy (Gold)</option>
-            <option value="alert">Alert (Red)</option>
-            <option value="info">Info (Blue)</option>
-          </select>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {filterOptions.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                onClick={() => onFilterChange(value)}
+                className={`flex items-center justify-center space-x-2 px-4 py-3 rounded-lg text-mono text-base transition-all duration-300 focus-gold ${filterValue === value ? 'bg-accent-gold/20 text-accent-gold border-accent-gold/50' : 'bg-primary-bg/60 text-primary-text/70 border-accent-gold/30 hover:bg-primary-bg/80'}`}>
+                <Icon class="w-4 h-4" />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Sort Dropdown */}
-        <div className="flex-1">
-          <label className="block text-pixel text-pixel-xs text-accent-gold mb-2">
+        <div class="flex-1 sm:max-w-xs">
+          <label class="block text-pixel text-pixel-xs text-accent-gold mb-2">
             Sort by:
           </label>
           <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-            className="w-full px-4 py-3 bg-primary-bg/60 border border-accent-gold/30 rounded-lg
+            value={sortValue}
+            onChange={(e) => onSortChange(e.target.value)}
+            class="w-full px-4 py-3 bg-primary-bg/60 border border-accent-gold/30 rounded-lg
                      text-mono text-base text-primary-text focus-gold
                      focus:border-accent-gold focus:bg-primary-bg/80 transition-all duration-300"
           >

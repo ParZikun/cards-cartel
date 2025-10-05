@@ -103,3 +103,4 @@ This section tracks the current bugs and planned improvements for the bot.
 -   [ ] We can even send alerts on email kek 
 -   [ ] Wallet connect for autobuy and a common slider for setting priority and fees for aping quickly 
 -   [ ] Update the UI kek Suprise bitches
+  

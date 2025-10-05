@@ -233,8 +233,7 @@
             }
 
             const cardElements = listings.map(listing => {
-                const listingPriceUSD = listing.price_amount ? listing.price_amount * solPriceUSD : null;
-                const diffPercent = listing.diffPercent;
+                const { listingPriceUSD, diffPercent } = listing;
                 const categoryStyle = getCategoryStyle(listing.cartel_category);
                 const altConfidenceColor = getAltConfidenceColor(listing.alt_value_confidence);
                 const differenceColor = getDifferenceColor(listing.cartel_category);
@@ -319,7 +318,7 @@
             let processedListings = allListingsCache.map(l => {
                 const listingPriceUSD = l.price_amount ? l.price_amount * solPriceUSD : null;
                 const diffPercent = (listingPriceUSD && l.alt_value > 0) ? (((listingPriceUSD - l.alt_value) / l.alt_value) * 100) : null;
-                return { ...l, diffPercent };
+                return { ...l, diffPercent, listingPriceUSD };
             });
 
             if (currentFilter !== 'ALL') {
@@ -439,6 +438,7 @@
             lucide.createIcons();
             await fetchSolPrice();
             await fetchListingsAndRender();
+            updateDisplay(); // Initial render with live price
             setInterval(fetchListingsAndRender, 5000);
             setInterval(fetchSolPrice, 60000);
         }
