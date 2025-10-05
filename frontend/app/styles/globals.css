@@ -1,0 +1,119 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-primary-bg text-gray-100 min-h-screen;
+    background-image: 
+      radial-gradient(circle at top right, rgba(121, 68, 207, 0.15), transparent 40%),
+      radial-gradient(circle at bottom left, rgba(46, 161, 241, 0.15), transparent 50%);
+    background-attachment: fixed;
+  }
+}
+
+/* Animated Hexagon Background */
+.hex-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.hex-bg::before {
+  content: "";
+  position: absolute;
+  width: 200%;
+  height: 200%;
+  top: -50%;
+  left: -50%;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="115.47" viewBox="0 0 100 115.47"><path fill="rgba(255,255,255,0.02)" d="M50 0L100 28.87v57.74L50 115.47 0 86.61V28.87L50 0z M50 5.77L6.7 31.75v51.97L50 109.7l43.3-25.98V31.75L50 5.77z"/></svg>');
+  animation: pan 60s linear infinite;
+}
+
+@keyframes pan {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Glassmorphism Effect */
+.glass-effect {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background-color: rgba(12, 10, 21, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Card Glow Effect */
+.card-glow {
+  transition: box-shadow 0.3s ease-in-out, border-color 0.3s ease-in-out;
+}
+
+.card-glow:hover {
+  box-shadow: 0 0 20px 0px rgba(255, 215, 0, 0.4);
+  border-color: rgba(255, 215, 0, 0.5);
+}
+
+/* Focus Ring Gold */
+.focus-ring-gold:focus {
+  outline: none;
+  ring: 2px;
+  ring-color: rgba(255, 215, 0, 0.5);
+}
+
+/* Custom Select Dropdown Arrow */
+.custom-select {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.5rem center;
+  background-repeat: no-repeat;
+  background-size: 1.5em 1.5em;
+  padding-right: 2.5rem;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* Fade In Animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-in-out forwards;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(12, 10, 21, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 215, 0, 0.3);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 215, 0, 0.5);
+}
