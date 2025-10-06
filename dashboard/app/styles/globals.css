@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:wght@400&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,7 +12,6 @@ html,
 body {
   max-width: 100vw;
   overflow-x: hidden;
-  font-family: 'VT323', monospace;
 }
 
 body {
@@ -21,6 +19,7 @@ body {
   background: #0c0a15;
   position: relative;
   min-height: 100vh;
+  font-family: var(--font-ibm-plex-mono), monospace;
  }
  
 /* Animated Background */
@@ -143,16 +142,6 @@ body::after {
   background: linear-gradient(135deg, #FFA500 0%, #FFD700 100%);
   transform: translateY(-2px);
   box-shadow: 0 4px 20px rgba(255, 215, 0, 0.4);
-}
-
-/* Typography */
-.text-pixel {
-  font-family: 'Press Start 2P', cursive;
-  line-height: 1.6;
-}
-
-.text-mono {
-  font-family: 'VT323', monospace;
 }
 
 /* Responsive text sizes for pixel font */

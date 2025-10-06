@@ -3,8 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Header from './components/Header'
 import Footer from './components/Footer'
-import SearchBar from './components/SearchBar'
-import FilterControls from './components/FilterControls'
+import Sidebar from './components/Sidebar'
 import ListingGrid from './components/ListingGrid'
 
 import { getSolPriceUsd } from './lib/priceService'
@@ -19,6 +18,8 @@ export default function Home() {
   const [solPriceUSD, setSolPriceUSD] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
   const [apiStatus, setApiStatus] = useState('loading')
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -127,33 +128,26 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header apiStatus={apiStatus} lastUpdated={lastUpdated} />
+      <Header apiStatus={apiStatus} lastUpdated={lastUpdated} onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} />
       
-      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto space-y-8">
-          {/* Hero Section */}
-          <div className="text-center mb-12">
-            <h2 className="text-pixel text-pixel-base sm:text-pixel-lg text-primary-text mb-4">
-              Mission Control
-            </h2>
-            <p className="text-mono text-lg text-primary-text/70 max-w-2xl mx-auto">
-              Target, Snipe, Collect.
-            </p>
-          </div>
-
-          {/* Search and Filter Controls */}
-          <SearchBar value={searchQuery} onChange={setSearchQuery} />
-          <FilterControls 
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-5">
+        <aside className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden ${isSidebarOpen ? 'block' : 'hidden'}`} onClick={() => setIsSidebarOpen(false)}></aside>
+        <aside className={`fixed top-0 left-0 h-full w-72 z-40 transform transition-transform duration-300 ease-in-out bg-primary-bg lg:static lg:col-span-1 xl:col-span-1 lg:w-auto lg:transform-none lg:transition-none ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <Sidebar 
             filterValue={filter} 
             onFilterChange={setFilter} 
             sortValue={sort} 
-            onSortChange={setSort} 
+            onSortChange={setSort}
+            searchValue={searchQuery}
+            onSearchChange={setSearchQuery}
+            onClose={() => setIsSidebarOpen(false)} // Pass close handler
           />
-          
-          {/* Results Grid */}
+        </aside>
+        
+        <main className="lg:col-span-3 xl:col-span-4 px-4 sm:px-6 lg:px-8 py-8">
           <ListingGrid listings={filteredAndSortedListings} loading={loading} error={error} solPriceUSD={solPriceUSD} />
-        </div>
-      </main>
+        </main>
+      </div>
       
       <Footer />
     </div>
