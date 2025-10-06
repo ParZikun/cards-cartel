@@ -163,3 +163,25 @@ def fetch_initial_listings(limit: int = 100):
 def fetch_new_listings(processed_ids: set):
     """Fetches the most recent listings and filters out any already processed."""
     return _fetch_listings(processed_ids=processed_ids, limit=100)
+
+def check_listing_status(mint_address: str) -> str:
+    """
+    Checks a single listing's status using the /v2/tokens/{mint} endpoint.
+    Returns 'listed', 'unlisted', or 'not_found'.
+    """
+    url = f"https://api-mainnet.magiceden.dev/v2/tokens/{mint_address}"
+    try:
+        # Using the same HEADERS as other requests in this file
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # Default to 'unlisted' if key is missing for safety
+            return data.get("listStatus", "unlisted")
+        elif response.status_code == 404:
+            return "not_found"
+        else:
+            logger.warning(f"ME API returned status {response.status_code} for {mint_address} during status check.")
+            return "unlisted" # Treat other errors as 'unlisted' to be safe
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request failed for {mint_address} status check: {e}")
+        return "unlisted" # Treat request failures as 'unlisted'

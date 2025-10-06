@@ -39,7 +39,8 @@ def init_db():
         alt_value_lower_bound REAL,
         alt_value_upper_bound REAL,
         alt_value_confidence REAL,
-        cartel_category TEXT NOT NULL DEFAULT 'NEW'
+        cartel_category TEXT NOT NULL DEFAULT 'NEW',
+        is_listed BOOLEAN DEFAULT 1
     )
     """)
     conn.commit()
@@ -122,3 +123,26 @@ def get_all_listing_ids() -> set:
     conn.close()
     return {row[0] for row in rows}
 
+
+def get_initial_reaper_queue_items() -> list[str]:
+    """Queries the DB for all active, relevant listings to populate the reaper queue."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    # Fetch all listings that we need to monitor
+    cursor.execute("SELECT token_mint FROM listings WHERE is_listed = 1 AND cartel_category != 'SKIP'")
+    rows = cursor.fetchall()
+    conn.close()
+    logger.info(f"Found {len(rows)} items for the initial reaper queue.")
+    return [row['token_mint'] for row in rows]
+
+def update_listing_status(mint_address: str, is_listed: bool):
+    """Updates the is_listed flag for a given listing."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Use integer 1 for True and 0 for False in SQLite
+    is_listed_int = 1 if is_listed else 0
+    cursor.execute("UPDATE listings SET is_listed = ? WHERE token_mint = ?", (is_listed_int, mint_address))
+    conn.commit()
+    conn.close()
+    logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
