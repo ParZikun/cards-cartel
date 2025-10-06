@@ -16,6 +16,39 @@ with open('logging_config.yaml', 'r') as f:
     logging.config.dictConfig(config)
 logger = logging.getLogger(__name__)
 
+verification_queue = asyncio.Queue()
+
+async def reaper(queue: asyncio.Queue):
+    """Pulls a mint address from the queue, verifies its status, and acts on it."""
+    logger.info("--- Starting Reaper ---")
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            mint_address = await queue.get()
+            
+            status = await loop.run_in_executor(
+                None, me.check_listing_status, mint_address
+            )
+
+            if status == "listed":
+                # If still listed, put it back at the end of the queue
+                await queue.put(mint_address)
+            else:
+                # If 'unlisted', 'not_found', or any other error status
+                logger.info(f"Reaper: Listing {mint_address} is no longer active (status: {status}). Updating DB.")
+                await loop.run_in_executor(
+                    None, database.update_listing_status, mint_address, False
+                )
+                # TODO: Add call to your Discord notification function to grey out the card.
+                # e.g., await discord_bot.notify_delisted(mint_address)
+
+            # IMPORTANT: Sleep to respect the 2 QPS rate limit.
+            await asyncio.sleep(0.55)
+        except Exception as e:
+            logger.error(f"Error in reaper task: {e}", exc_info=True)
+        finally:
+            queue.task_done()
+
 async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool = True):
     """
     The complete, atomic pipeline for a single listing:
@@ -23,6 +56,7 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
     2. Check business logic.
     3. Queue alert for Discord if it's a snipe.
     4. Save the complete record to DB.
+    5. Add to the reaper's verification queue if relevant.
     """
     start_time = time.time()
     logger.info(f"Processing: {listing.get('name')} ({listing.get('grading_id')})")
@@ -76,6 +110,14 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
        
 
         await asyncio.to_thread(database.update_listing, listing['listing_id'], snipe_details, cartel_category)
+        
+        # --- Add to Reaper Queue if not SKIP ---
+        if cartel_category != 'SKIP':
+            token_mint = listing.get('token_mint')
+            if token_mint:
+                logger.info(f"Adding {token_mint} to reaper queue (Category: {cartel_category}).")
+                await verification_queue.put(token_mint)
+
         duration = time.time() - start_time
         logger.info(f"Successfully processed {listing.get('name')}. Took {duration:.3f}s. Alert: {alert_level}")
 
@@ -107,22 +149,18 @@ async def watchdog(queue: asyncio.Queue):
     processed_ids = await asyncio.to_thread(database.get_all_listing_ids)
     logger.info(f"Loaded {len(processed_ids)} previously processed listing IDs.")
     loop = asyncio.get_running_loop()
-    status_line = "" # Initialize to avoid errors
+    
     while True:
         try:
-            timestamp = datetime.now().strftime('%H:%M:%S')
-            status_line = f" Watchdog is live | Last poll at: {timestamp} "
-            # Use print with '\r' to overwrite the line and flush=True to force immediate display
-            print(status_line, end='\r', flush=True)
-
+            
             new_listings = await loop.run_in_executor(None, me.fetch_new_listings, processed_ids)
             if new_listings:
-                print(" " * len(status_line), end='\r', flush=True)
                 logger.info(f"Found {len(new_listings)} new items!")
                 tasks = []
                 for listing in new_listings:
                     processed_ids.add(listing['listing_id'])
                     await asyncio.to_thread(database.save_listing, [listing])
+                    # The process_listing function now handles adding to the reaper queue internally
                     tasks.append(process_listing(listing, queue, send_alert=True))
                 await asyncio.gather(*tasks)
             await asyncio.sleep(0.3)
@@ -134,14 +172,24 @@ async def main():
     """The main entry point for the application."""
     snipe_queue = asyncio.Queue()
     logger.info("--- Sniper booting up ---")
+    
+    # Initialize DB
     await asyncio.to_thread(database.init_db)
+
+    # Populate the reaper queue with existing items from the DB
+    initial_reaper_items = await asyncio.to_thread(database.get_initial_reaper_queue_items)
+    for item in initial_reaper_items:
+        await verification_queue.put(item)
     
     if not await asyncio.to_thread(database.get_all_listing_ids):
         await initial_population(snipe_queue)
 
+    # Start all background tasks
     discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue))
     watchdog_task = asyncio.create_task(watchdog(snipe_queue))
-    await asyncio.gather(discord_task, watchdog_task)
+    reaper_task = asyncio.create_task(reaper(verification_queue))
+    
+    await asyncio.gather(discord_task, watchdog_task, reaper_task)
 
 if __name__ == "__main__":
     try:

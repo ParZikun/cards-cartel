@@ -4,6 +4,7 @@ from flask import Flask, jsonify, request, abort
 from flask_cors import CORS
 import os
 from functools import wraps
+from waitress import serve
 
 # --- Configuration ---
 DATABASE_PATH = 'data/listings.db'
@@ -83,7 +84,4 @@ def get_listings():
         return jsonify({"error": "An internal server error occurred"}), 500
 
 if __name__ == '__main__':
-    # This part is for local testing only. In production, a proper WSGI server is used.
-    if not API_KEY:
-        logger.warning("API_KEY environment variable not set. Running in insecure mode for local testing.")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    serve(app, host="0.0.0.0", port=5000)
