@@ -1,3 +1,40 @@
+@font-face {
+  font-family: 'PokemonSolid';
+  src: url('/pokemon-solid.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'PokemonHollow';
+  src: url('/pokemon-hollow.ttf') format('truetype');
+}
+
+.font-pokemon {
+  font-family: 'PokemonSolid', sans-serif;
+}
+
+.font-pokemon-hollow {
+  font-family: 'PokemonHollow', sans-serif;
+}
+
+.pokemon-title {
+  position: relative;
+  display: inline-block;
+}
+
+.pokemon-title-solid {
+  position: relative;
+  z-index: 1;
+}
+
+.pokemon-title-outline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  color: #3B82F6; /* blue-500 */
+  pointer-events: none; /* Allows clicks to pass through to the element below */
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -66,19 +103,7 @@ body::after {
       rgba(255, 215, 0, 0.03) 2px,
       rgba(255, 215, 0, 0.03) 4px
     );
-  animation: float 360s ease-in-out infinite;
   z-index: -1;
- }
-@keyframes float {
-  0% {
-    transform: translate(0, 0);
-  }
-  50% {
-    transform: translate(-5%, -5%);
-  }
-  100% {
-    transform: translate(0, 0);
-  }
 }
 
 /* Custom Scrollbar */
