@@ -107,7 +107,7 @@ export default function Home() {
         };
         const categoryMatch = filter === 'all' || listing.cartel_category === categoryMap[filter];
 
-        return searchMatch && categoryMatch;
+        return searchMatch && categoryMatch && listing.cartel_category !== 'SKIP';
       })
       .sort((a, b) => {
         switch (sort) {

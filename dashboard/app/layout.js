@@ -1,38 +1,27 @@
 import { IBM_Plex_Mono, Press_Start_2P, VT323 } from 'next/font/google'
 import './styles/globals.css'
+import "@solana/wallet-adapter-react-ui/styles.css";
+import { SolanaProvider } from "./components/SolanaProvider";
+import localFont from 'next/font/local';
 
-const ibmPlexMono = IBM_Plex_Mono({
-  weight: ['400', '700'],
-  subsets: ['latin'],
-  variable: '--font-ibm-plex-mono',
-  display: 'swap',
-})
+const pokemonHollow = localFont({ 
+  src: '../public/pokemon-hollow.ttf',
+  variable: '--font-pokemon-hollow'
+});
 
-const pressStart2P = Press_Start_2P({
-  weight: ['400'],
-  subsets: ['latin'],
-  variable: '--font-press-start-2p',
-  display: 'swap',
-})
-
-const vt323 = VT323({
-  weight: ['400'],
-  subsets: ['latin'],
-  variable: '--font-vt323',
-  display: 'swap',
-})
-
-export const metadata = {
-  title: 'Cartel Pro Sniper Bot',
-  description: 'Professional Pokémon card sniping dashboard',
-}
+const pokemonSolid = localFont({ 
+  src: '../public/pokemon-solid.ttf',
+  variable: '--font-pokemon-solid'
+});
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${ibmPlexMono.variable} ${pressStart2P.variable} ${vt323.variable}`}>
-      <body className="min-h-screen bg-primary-bg text-primary-text">
-        {children}
+    <html lang="en" className={`${pokemonHollow.variable} ${pokemonSolid.variable}`}>
+      <body>
+        <SolanaProvider>
+          {children}
+        </SolanaProvider>
       </body>
     </html>
-  )
+  );
 }
