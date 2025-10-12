@@ -3,6 +3,7 @@ import logging
 from flask import Flask, jsonify, request, abort
 from flask_cors import CORS
 import os
+import requests
 from functools import wraps
 from waitress import serve
 
@@ -81,6 +82,30 @@ def get_listings():
 
     except Exception as e:
         logger.error(f"An error occurred while fetching listings: {e}", exc_info=True)
+        return jsonify({"error": "An internal server error occurred"}), 500
+
+@app.route('/api/wallets/<wallet_address>/tokens', methods=['GET'])
+@api_key_required
+def get_wallet_tokens(wallet_address):
+    logger.info(f"Request received for /api/v1/wallets/{wallet_address}/tokens from {request.remote_addr}")
+    try:
+        # Forward query parameters from the incoming request to the Magic Eden API
+        params = request.args.to_dict()
+        
+        me_api_url = f"https://api-mainnet.magiceden.dev/v2/wallets/{wallet_address}/tokens"
+        
+        response = requests.get(me_api_url, params=params)
+        response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
+        
+        return jsonify(response.json())
+
+    except requests.exceptions.HTTPError as e:
+        # More specific error logging for HTTP errors
+        logger.error(f"HTTP error occurred while fetching from Magic Eden: {e}", exc_info=True)
+        # Pass through Magic Eden's error response and status code if possible
+        return jsonify(e.response.json()), e.response.status_code
+    except Exception as e:
+        logger.error(f"An error occurred while fetching wallet tokens: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred"}), 500
 
 if __name__ == '__main__':
