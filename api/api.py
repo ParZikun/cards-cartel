@@ -6,6 +6,7 @@ import os
 import requests
 from functools import wraps
 from waitress import serve
+from pythonjsonlogger import jsonlogger
 
 # --- Configuration ---
 DATABASE_PATH = 'data/listings.db'
@@ -13,8 +14,12 @@ DATA_DIR = 'data'
 API_KEY = os.getenv('API_KEY')
 
 # --- Setup Logging ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logHandler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logHandler.setFormatter(formatter)
+logger.addHandler(logHandler)
 
 # --- Initialize Flask App ---
 app = Flask(__name__)
@@ -88,6 +93,11 @@ def get_listings():
 @api_key_required
 def get_wallet_tokens(wallet_address):
     logger.info(f"Request received for /api/v1/wallets/{wallet_address}/tokens from {request.remote_addr}")
+    # Basic validation for a Solana address
+    if not (32 <= len(wallet_address) <= 44 and wallet_address.isalnum()):
+        logger.warning(f"Invalid wallet address format received: {wallet_address}")
+        return jsonify({"error": "Invalid wallet address format."}), 400
+        
     try:
         # Forward query parameters from the incoming request to the Magic Eden API
         params = request.args.to_dict()

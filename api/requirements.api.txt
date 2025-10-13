@@ -2,3 +2,4 @@ Flask
 Flask-Cors
 waitress
 requests
+python-json-logger

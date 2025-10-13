@@ -76,7 +76,9 @@ export default function Home() {
               return false;
             }
             return item.attributes.some(attr => 
-              attr && attr.trait_type === 'Category' && attr.value === 'Pokemon'
+              typeof attr === 'object' && attr !== null &&
+              typeof attr.trait_type === 'string' && attr.trait_type === 'Category' &&
+              typeof attr.value === 'string' && attr.value === 'Pokemon'
             );
           });
 
