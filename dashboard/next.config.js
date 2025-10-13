@@ -12,11 +12,35 @@ const nextConfig = {
       },
       {
         protocol: 'https',
+        hostname: '*.arweave.net',
+      },
+      {
+        protocol: 'https',
         hostname: 'cdn.prod.website-files.com',
       },
       {
         protocol: 'https',
         hostname: 'www.marketbeat.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'magiceden-launchpad.mypinata.cloud',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.mypinata.cloud',
+      },
+      {
+        protocol: 'https',
+        hostname: 'ipfs.io',
+      },
+      {
+        protocol: 'https',
+        hostname: 'bafybeif3ef6migxwcxj6lvpyzhilpp3qz64pqzytnmscq2v6bbwck64zku.ipfs.nftstorage.link',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.ipfs.nftstorage.link',
       },
     ],
   },

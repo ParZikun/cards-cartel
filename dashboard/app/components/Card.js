@@ -1,5 +1,10 @@
-import Image from 'next/image'
-import { WalletCards, TrendingDown, Tag, BarChart4, Copy, Zap } from 'lucide-react';
+import Image from 'next/image';
+import { WalletCards, TrendingDown, Tag, BarChart4, Copy, Zap, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { useState } from 'react';
+import { useConnection } from '@solana/wallet-adapter-react';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useTransaction } from '../context/TransactionContext';
+import { Transaction, VersionedTransaction } from '@solana/web3.js';
 
 const getCategoryStyle = (category) => {
     const styles = {
@@ -42,6 +47,12 @@ const getDifferenceColor = (category) => {
 }
 
 export default function Card({ listing, solPriceUSD, priority }) {
+    const { connection } = useConnection();
+    const { publicKey, signTransaction, sendTransaction } = useWallet();
+    const { priorityFee } = useTransaction(); // Assuming slippage is handled elsewhere or not needed for this step
+    
+    const [snipeState, setSnipeState] = useState('idle'); // idle, loading, success, error
+
     const listingPriceUSD = listing.price_amount ? listing.price_amount * solPriceUSD : null;
     const diffPercent = (listingPriceUSD && listing.alt_value > 0) ? (((listingPriceUSD - listing.alt_value) / listing.alt_value) * 100) : null;
     const categoryStyle = getCategoryStyle(listing.cartel_category);
@@ -51,6 +62,102 @@ export default function Card({ listing, solPriceUSD, priority }) {
     const copyToClipboard = (text) => {
         navigator.clipboard.writeText(text);
         // You can add a toast notification here
+    };
+
+    const handleSnipe = async () => {
+        if (!publicKey) {
+            alert('Please connect your wallet first!');
+            return;
+        }
+        setSnipeState('loading');
+
+        try {
+            // 1. Get transaction instructions from our API
+            const response = await fetch('/api/magiceden/buy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    buyer: publicKey.toBase58(),
+                    tokenMint: listing.token_mint,
+                    price: listing.price_amount,
+                    priorityFee: priorityFee,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to get transaction instructions');
+            }
+
+            const data = await response.json();
+            
+            // The API sends back a field `tx` which is a base64 encoded transaction
+            const txData = data.tx;
+
+            // 2. Deserialize the transaction
+            const txBuffer = Buffer.from(txData, 'base64');
+            
+            let transaction;
+            try {
+                // First try to deserialize as a VersionedTransaction
+                transaction = VersionedTransaction.deserialize(txBuffer);
+                console.log("Deserialized as VersionedTransaction");
+            } catch (e) {
+                try {
+                    // If that fails, try to deserialize as a legacy Transaction
+                    transaction = Transaction.from(txBuffer);
+                    console.log("Deserialized as Legacy Transaction");
+                } catch (e2) {
+                    console.error("Failed to deserialize transaction:", e2);
+                    throw new Error("Could not deserialize the transaction from Magic Eden.");
+                }
+            }
+
+            // 3. Sign the transaction with the user's wallet
+            if (!signTransaction) {
+                 throw new Error('Wallet does not support signing transactions.');
+            }
+            const signedTx = await signTransaction(transaction);
+
+            // 4. Send the transaction
+            const signature = await connection.sendRawTransaction(signedTx.serialize());
+
+            // 5. Confirm the transaction
+            await connection.confirmTransaction(signature, 'processed');
+
+            setSnipeState('success');
+            setTimeout(() => setSnipeState('idle'), 3000); // Reset after 3s
+
+        } catch (error) {
+            console.error("Snipe failed:", error);
+            setSnipeState('error');
+            setTimeout(() => setSnipeState('idle'), 3000); // Reset after 3s
+        }
+    };
+
+    const getButtonContent = () => {
+        switch (snipeState) {
+            case 'loading':
+                return <><Loader className="w-4 h-4 animate-spin" /><span>Processing...</span></>;
+            case 'success':
+                return <><CheckCircle className="w-4 h-4" /><span>Success!</span></>;
+            case 'error':
+                return <><XCircle className="w-4 h-4" /><span>Failed</span></>;
+            default:
+                return <><Zap className="w-4 h-4" /><span>{listing.listed ? 'Snipe Now' : 'Sold'}</span></>;
+        }
+    };
+
+    const getButtonClass = () => {
+        switch (snipeState) {
+            case 'loading':
+                return 'bg-gray-500';
+            case 'success':
+                return 'bg-green-500 hover:bg-green-600';
+            case 'error':
+                return 'bg-red-500 hover:bg-red-600';
+            default:
+                return 'bg-yellow-500 hover:bg-yellow-600';
+        }
     };
 
     return (
@@ -69,7 +176,7 @@ export default function Card({ listing, solPriceUSD, priority }) {
                 
                 <div className="text-xs text-gray-500 space-y-1 mb-3">
                     <p>Grading ID: <span className="font-mono text-gray-300">{listing.grading_id || 'N/A'}</span></p>
-                    <p>Insured: <span className="font-mono text-gray-300">{listing.insured_value !== null ? listing.insured_value.toFixed(2) : 'N/A'}</span></p>
+                    <p>Insured: <span className="font-mono text-gray-300">{listing.insured_value != null ? listing.insured_value.toFixed(2) : 'N/A'}</span></p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 my-2">
@@ -108,11 +215,11 @@ export default function Card({ listing, solPriceUSD, priority }) {
                     </div>
                     <div className="flex gap-2 mt-2">
                         <button 
-                            className="buy-now-btn flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-black text-sm font-bold py-2 px-3 rounded-md transition-colors duration-200 disabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={!listing.listed}
+                            className={`buy-now-btn flex-1 flex items-center justify-center gap-2 text-black text-sm font-bold py-2 px-3 rounded-md transition-all duration-200 disabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed ${getButtonClass()}`}
+                            disabled={true} // !listing.listed || snipeState === 'loading' || snipeState === 'success'}
+                            onClick={handleSnipe}
                         >
-                            <Zap className="w-4 h-4" />
-                            <span>{listing.listed ? 'Buy Now' : 'Sold'}</span>
+                            {getButtonContent()}
                         </button>
                         <a href={`https://magiceden.io/item-details/${listing.token_mint}`} target="_blank" className="flex-1 flex items-center justify-center gap-2 text-center bg-sky-500/20 hover:bg-sky-500/40 text-sky-300 text-sm font-bold py-2 px-3 rounded-md transition-colors duration-200">
                             <Image src="https://cdn.prod.website-files.com/614c99cf4f23700c8aa3752a/637db1043720a3ea88e4ea96_public.png" width={20} height={20} className="object-contain" alt="Magic Eden Logo" />

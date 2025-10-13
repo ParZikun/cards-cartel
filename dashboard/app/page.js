@@ -5,11 +5,15 @@ import Header from './components/Header'
 import Footer from './components/Footer'
 import Sidebar from './components/Sidebar'
 import ListingGrid from './components/ListingGrid'
+import HoldingsGrid from './components/HoldingsGrid'
+import { useWallet } from '@solana/wallet-adapter-react';
+
 
 import { getSolPriceUsd } from './lib/priceService'
 
 export default function Home() {
   const [listings, setListings] = useState([])
+  const [holdings, setHoldings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -20,69 +24,80 @@ export default function Home() {
   const [apiStatus, setApiStatus] = useState('loading')
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [view, setView] = useState('listings') // 'listings' or 'holdings'
+  const { connected, publicKey } = useWallet();
+
+  const walletAddress = connected && publicKey ? publicKey.toBase58() : null;
+  // const walletAddress = connected && publicKey ? "2yDeCKeFbjiwHhCvRohd2groXGaLVZNkrZLTTkiuTp2d": null;;
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setApiStatus('loading');
-        const price = await getSolPriceUsd();
-        if (price > 0) {
-          setSolPriceUSD(price);
-        }
-
-        const response = await fetch(process.env.API_URL, {
-          headers: {
-            'X-API-Key': process.env.API_KEY
-          }
-        });
-        if (!response.ok) {
-          throw new Error(`API returned status ${response.status}`)
-        }
-        const data = await response.json();
-        setListings(data)
-        setApiStatus('live')
-        setLastUpdated(new Date())
-      } catch (e) {
-        setError(e.message)
-        setApiStatus('error')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData(); // Initial fetch
-
-    const priceInterval = setInterval(async () => {
+    const fetchPrice = async () => {
       const price = await getSolPriceUsd();
       if (price > 0) {
         setSolPriceUSD(price);
       }
-    }, 60000); // Refresh price every minute
+    };
+    fetchPrice();
+    const priceInterval = setInterval(fetchPrice, 60000);
+    return () => clearInterval(priceInterval);
+  }, []);
 
-    const listingsInterval = setInterval(async () => {
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      setApiStatus('loading');
+      setError(null);
+
       try {
-        const response = await fetch(process.env.API_URL, {
-          headers: {
-            'X-API-Key': process.env.API_KEY
+        if (view === 'listings') {
+          const response = await fetch('/api/listings');
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error: ${response.status} - ${errorText}`);
           }
-        });
-        if (response.ok) {
           const data = await response.json();
           setListings(data);
-          setApiStatus('live');
-          setLastUpdated(new Date());
-        }
-      } catch (e) {
-        // Silently fail on interval updates or handle as needed
-        console.warn("Failed to refresh listings in background", e);
-      }
-    }, 5000); // Refresh listings every 5 seconds
+        } else if (view === 'holdings') {
+          if (!connected || !walletAddress) {
+            setHoldings([]);
+            setLoading(false);
+            return;
+          }
+          const response = await fetch(`/api/wallets/${walletAddress}/tokens`);
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error: ${response.status} - ${errorText}`);
+          }
+          const rawHoldings = await response.json();
+          
+          // Safely filter for Pokemon cards
+          const pokemonHoldings = rawHoldings.filter(item => {
+            if (!item || !Array.isArray(item.attributes)) {
+              return false;
+            }
+            return item.attributes.some(attr => 
+              typeof attr === 'object' && attr !== null &&
+              typeof attr.trait_type === 'string' && attr.trait_type === 'Category' &&
+              typeof attr.value === 'string' && attr.value === 'Pokemon'
+            );
+          });
 
-    return () => {
-      clearInterval(priceInterval);
-      clearInterval(listingsInterval);
-    }; // Cleanup on unmount
-  }, [])
+          setHoldings(pokemonHoldings);
+        }
+
+        setApiStatus('live');
+        setLastUpdated(new Date());
+      } catch (e) {
+        setError(e.message);
+        setApiStatus('error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+
+  }, [view, walletAddress, connected]);
 
   const filteredAndSortedListings = useMemo(() => {
     return listings
@@ -128,7 +143,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header apiStatus={apiStatus} lastUpdated={lastUpdated} onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} />
+      <Header 
+        apiStatus={apiStatus} 
+        lastUpdated={lastUpdated} 
+        onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
       
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-5">
         <aside className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden ${isSidebarOpen ? 'block' : 'hidden'}`} onClick={() => setIsSidebarOpen(false)}></aside>
@@ -140,12 +159,18 @@ export default function Home() {
             onSortChange={setSort}
             searchValue={searchQuery}
             onSearchChange={setSearchQuery}
-            onClose={() => setIsSidebarOpen(false)} // Pass close handler
+            onClose={() => setIsSidebarOpen(false)}
+            view={view}
+            setView={setView}
           />
         </aside>
         
         <main className="lg:col-span-3 xl:col-span-4 px-4 sm:px-6 lg:px-8 py-8">
-          <ListingGrid listings={filteredAndSortedListings} loading={loading} error={error} solPriceUSD={solPriceUSD} />
+          {view === 'listings' ? (
+            <ListingGrid listings={filteredAndSortedListings} loading={loading} error={error} solPriceUSD={solPriceUSD} />
+          ) : (
+            <HoldingsGrid holdings={holdings} loading={loading} error={error} />
+          )}
         </main>
       </div>
       
