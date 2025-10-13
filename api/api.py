@@ -92,7 +92,7 @@ def get_listings():
 @app.route('/api/wallets/<wallet_address>/tokens', methods=['GET'])
 @api_key_required
 def get_wallet_tokens(wallet_address):
-    logger.info(f"Request received for /api/v1/wallets/{wallet_address}/tokens from {request.remote_addr}")
+    logger.info(f"Request received for /api/wallets/{wallet_address}/tokens from {request.remote_addr}")
     # Basic validation for a Solana address
     if not (32 <= len(wallet_address) <= 44 and wallet_address.isalnum()):
         logger.warning(f"Invalid wallet address format received: {wallet_address}")
@@ -110,13 +110,25 @@ def get_wallet_tokens(wallet_address):
         return jsonify(response.json())
 
     except requests.exceptions.HTTPError as e:
-        # More specific error logging for HTTP errors
         logger.error(f"HTTP error occurred while fetching from Magic Eden: {e}", exc_info=True)
-        # Pass through Magic Eden's error response and status code if possible
-        return jsonify(e.response.json()), e.response.status_code
+        try:
+            # Try to return Magic Eden's JSON error response
+            error_json = e.response.json()
+            return jsonify(error_json), e.response.status_code
+        except ValueError: # Catches JSONDecodeError
+            # If Magic Eden returns HTML or other non-JSON error, return it as text
+            return e.response.text, e.response.status_code
     except Exception as e:
         logger.error(f"An error occurred while fetching wallet tokens: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred"}), 500
 
 if __name__ == '__main__':
-    serve(app, host="0.0.0.0", port=5000)
+    # To run with HTTPS, you need a certificate and a private key.
+    # 1. Make sure you have OpenSSL installed.
+    # 2. Generate a self-signed certificate and key:
+    #    openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
+    # 3. Uncomment the line below and update the paths to your cert.pem and key.pem files.
+    serve(app, host="0.0.0.0", port=5000, url_scheme='https', ssl_context=('../cert.pem', '../key.pem'))
+
+    # The current default is HTTP:
+    # serve(app, host="0.0.0.0", port=5000)
