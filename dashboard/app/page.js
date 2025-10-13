@@ -9,7 +9,7 @@ import HoldingsGrid from './components/HoldingsGrid'
 import { useWallet } from '@solana/wallet-adapter-react';
 
 
-import { getSolPriceUsd } from './lib/priceService'
+import { getSolPriceUsd } from './live/priceService'
 
 export default function Home() {
   const [listings, setListings] = useState([])
