@@ -30,30 +30,13 @@ Before adding more complex features, we should strengthen the application's foun
     -   **`Web API Service` (current `api` container):** This will be a dedicated web server (e.g., using FastAPI) that the future Next.js dashboard will communicate with. Its only job is to read data from the PostgreSQL database and present it via API endpoints (e.g., `/api/v1/deals`). It will not contain any scraping or bot logic.
 -   **Why:** This separation of concerns makes the system much cleaner, easier to maintain, and allows us to scale the web application and the background worker independently.
 
+### 1.3 Add Certificate to the API so that we can read it officially from https and not http so it is more secure
+
 ---
 
 ## 2. New Discord Bot Features
 
 These features can be tested on Discord before being implemented in the web dashboard.
-
-### 2.1. Feature: Display Processing Time in Embed
-
--   **Goal:** Add the total time taken (from card found to Discord ping) to the footer of the snipe embed.
--   **Implementation Plan:**
-    1.  In `main.py`, the `process_listing` function already calculates the `duration`.
-    2.  Modify the data structure put into the `snipe_queue` to include this `duration`.
-    3.  In `discord_bot.py`, the consumer loop will retrieve the `duration` from the queue item.
-    4.  In `discord_embeds.py`, modify the `create_snipe_embed` function to accept the `duration` and append `f"| Processed in {duration:.2f}s"` to the footer text.
-
-### 2.2. Feature: Interactive Listing Command (`/list_deals`)
-
--   **Goal:** Create a command to show all active "GOOD" or "AUTOBUY" deals, and allow a user to select one to view its full embed.
--   **Implementation Plan:**
-    1.  **Create Slash Command:** In `discord_bot.py`, define a new slash command (e.g., `/list_deals`).
-    2.  **Database Query:** The command handler will query the PostgreSQL database for all listings where `is_listed = TRUE` AND `cartel_category IN ('GOOD', 'AUTOBUY')`.
-    3.  **Create Interactive Menu:** The command will respond with a message containing a **Discord Select Menu**. Each option in the dropdown will correspond to a card, with the card's name as the label and its unique `listing_id` as the value.
-    4.  **Create Interaction Listener:** An `on_interaction` event listener will be created. It will listen for the user selecting an option from the menu.
-    5.  **Respond with Embed:** When a user makes a selection, the listener will use the `listing_id` from the interaction to fetch that specific card's full details from the database and send a new message containing the complete, familiar snipe embed for that card.
 
 ### 2.3. Feature: Full Database Re-check (`/recheck_all`)
 

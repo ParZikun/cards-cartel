@@ -144,7 +144,10 @@ class CartelBot(commands.Bot):
 
 async def start_discord_bot(queue: asyncio.Queue):
     intents = discord.Intents.default()
-    intents.message_content = True
+    intents.message_content = True # If you plan commands or need message content
+    intents.members = True         # Required for Server Members Intent
+    intents.presences = True       # Required for Presence Intent
+    
     bot = CartelBot(snipe_queue=queue, command_prefix="!", intents=intents)
 
     @bot.tree.command(name="cartel_deals", description="Lists active deals from the database.")
