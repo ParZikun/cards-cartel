@@ -10,7 +10,7 @@ ME_EMOTE = "<:ME:1416955336258097213>"
 ALT_EMOTE = "<:ALT:1416955327303389335>"
 DOLLAR_EMOTE = "<:dollar:1417032571371655309>"
 
-def create_snipe_embed(listing_data: dict, snipe_details: dict, alert_level: str):
+def create_snipe_embed(listing_data: dict, snipe_details: dict, alert_level: str, duration: float = 0.0):
     """
     Creates a rich discord.Embed object based on the new design.
     """
@@ -24,6 +24,10 @@ def create_snipe_embed(listing_data: dict, snipe_details: dict, alert_level: str
     else:
         color = 0x0099ff # Blue
         footer_text = "INFO"
+
+    # Append duration to the footer text
+    if duration > 0:
+        footer_text += f" | Processed in {duration:.2f}s"
 
     me_link = f"https://magiceden.io/item-details/{listing_data.get('token_mint')}"
     cc_link = f"https://collectorcrypt.com/assets/solana/{listing_data.get('token_mint')}"

@@ -146,3 +146,44 @@ def update_listing_status(mint_address: str, is_listed: bool):
     conn.commit()
     conn.close()
     logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
+
+def get_active_deals_by_category(categories: list, limit: int = 25) -> list[dict]:
+    """
+    Fetches active deals for a given list of cartel_categories.
+    Returns a list of dicts with 'name' and 'listing_id'.
+    """
+    if not categories:
+        return []
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Create a string of placeholders for the IN clause, e.g., (?, ?, ?)
+    placeholders = ', '.join('?' for _ in categories)
+    query = f"""
+        SELECT name, listing_id FROM listings 
+        WHERE is_listed = 1 AND cartel_category IN ({placeholders})
+        ORDER BY listed_at DESC
+        LIMIT ?
+    """
+    
+    params = categories + [limit]
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_listing_by_id(listing_id: str) -> dict | None:
+    """
+    Fetches all details for a single listing by its ID.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM listings WHERE listing_id = ?", (listing_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None

@@ -4,23 +4,40 @@ services:
   # --- The Sniper Bot Service ---
   bot:
     build: ./bot
-    container_name: sniper-bot    # Added for easy reference (e.g., 'docker logs sniper-bot')
+    container_name: sniper-bot
     volumes:
       - ./data:/app/data
     env_file:
-      - ./.env
+      - ./.env.local  # Docker Compose will use this if it exists
+      - ./.env        # It will fall back to this if .env.local is not found
+    environment:
+      # This tells the bot to send traces to the Jaeger container
+      - OTEL_EXPORTER_TYPE=JAEGER
+      # This is the address of the Jaeger service within the Docker network
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     restart: always
 
   # --- The API Service ---
   api:
     build: ./api
-    container_name: sniper-api    # Added for easy reference
+    container_name: sniper-api
     ports:
       - "5000:5000"
     volumes:
       - ./data:/app/data
+      - ./cert.pem:/app/cert.pem
+      - ./key.pem:/app/key.pem
     env_file:
       - ./.env
-    depends_on:                   # Ensures the 'bot' service is created before the 'api'
+    depends_on:
       - bot
+    restart: always
+
+  # --- Jaeger Tracing Service ---
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"     # Jaeger UI is accessible at http://localhost:16686
+      - "4317:4317"       # OTLP gRPC receiver for our bot
     restart: always
