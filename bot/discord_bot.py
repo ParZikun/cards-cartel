@@ -182,7 +182,24 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: callable
         view = DealSelectorView(deals)
         await interaction.followup.send(f"Found **{len(deals)}** active deals in the **{category.name}** category. Select one to view details.", view=view, ephemeral=True)
 
-    @bot.tree.command(name="recheck_all", description="Admin: Triggers a full re-analysis of all active listings.")
+    @bot.tree.command(name="find_card", description="Finds a card by its mint address.")
+    @app_commands.describe(mint_address="The mint address of the card to find.")
+    async def find_card(interaction: discord.Interaction, mint_address: str):
+        """Handles the /find_card command."""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        deal_data = await asyncio.to_thread(database.get_listing_by_mint, mint_address)
+        
+        if not deal_data:
+            await interaction.followup.send(f"Sorry, I couldn't find a card with the mint address `{mint_address}`.", ephemeral=True)
+            return
+            
+        listing_data, snipe_details = _reconstruct_embed_data(deal_data)
+        alert_level = deal_data.get('cartel_category', 'INFO')
+        embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration=0.0)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name=\"recheck_all\", description=\"Admin: Triggers a full re-analysis of all active listings.\")
     @app_commands.checks.has_role(ROLE_ID)
     async def recheck_all(interaction: discord.Interaction):
         """Handles the /recheck_all command."""

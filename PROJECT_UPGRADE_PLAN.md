@@ -32,28 +32,13 @@ Before adding more complex features, we should strengthen the application's foun
 
 ### 1.3 Add Certificate to the API so that we can read it officially from https and not http so it is more secure
 
----
 
-## 2. New Discord Bot Features
+----
 
-These features can be tested on Discord before being implemented in the web dashboard.
+### Rough TODO
 
-### 2.3. Feature: Full Database Re-check (`/recheck_all`)
-
--   **Goal:** Create a command to manually trigger a re-analysis of all currently listed items in the database to find new snipes from old listings.
--   **Implementation Plan:**
-    1.  **Create Slash Command:** In `discord_bot.py`, define a new admin-only slash command (e.g., `/recheck_all`).
-    2.  **Database Query:** The command handler will fetch all listings from the database where `is_listed = TRUE`.
-    3.  **Background Task:** To avoid blocking the bot, it will spawn a new background task.
-    4.  **Re-process Loop:** This background task will loop through the list of active listings. For each listing, it will call the `process_listing` function (the same one used by the watchdog). A small `await asyncio.sleep(1)` should be added between each call to avoid API rate-limiting.
-    5.  **User Feedback:** The bot should send an initial response like "✅ Starting a re-check of all X active listings. This may take some time." and potentially a final message upon completion.
-
-### 2.4. Enhancement: Automated Re-checking Service - COMPLETED
-
--   **Note:** The user's idea for a background re-checking service is excellent. This can be an enhancement of the existing `reaper` task.
--   **Proposal:**
-    -   The `reaper` task currently checks if a listing has been *delisted*.
-    -   We can enhance its logic: if a listing is still active but hasn't been re-analyzed in over 24 hours (we would need to add a `last_analyzed_at` timestamp to the database), the reaper can trigger the `process_listing` function for it.
-    -   This would automate the process of finding new snipes in old listings, fully realizing the goal of Feature 2.3 without manual intervention.
-
-### 2.5 Add a command to check a particular card and pull its latest details based on the mint tokn address
+- Wallet holdings ?? in dc 
+- convert the links to buttons below embed for cc, alt, me, buy
+- add token copy button too below embed or grade id copy button
+- cant add to many buttons so need to see which ones are imp
+- 
