@@ -25,7 +25,7 @@ import get_magic_eden_data as me
 import get_alt_data as alt
 import utils as utils
 import discord_bot
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # --- Setup Logging ---
 with open('logging_config.yaml', 'r') as f:
@@ -39,7 +39,7 @@ tracer = tracing.get_tracer(__name__)
 
 verification_queue = asyncio.Queue()
 
-async def reaper(queue: asyncio.Queue):
+async def reaper(verification_queue: asyncio.Queue, snipe_queue: asyncio.Queue):
     """Pulls a mint address from the queue, verifies its status, and acts on it."""
     logger.info("--- Starting Reaper ---")
     while True:
@@ -47,14 +47,27 @@ async def reaper(queue: asyncio.Queue):
         try:
             # Start a new span for each item pulled from the queue
             with tracer.start_as_current_span("reaper_iteration") as iteration_span:
-                mint_address = await queue.get()
+                mint_address = await verification_queue.get()
                 iteration_span.set_attribute("mint_address", mint_address)
                 
                 status = await me.check_listing_status_async(mint_address)
                 iteration_span.set_attribute("listing.status", status)
 
                 if status == "listed":
-                    await queue.put(mint_address)
+                    # If still listed, check if it needs re-analysis
+                    listing = await asyncio.to_thread(database.get_listing_by_mint, mint_address)
+                    if listing:
+                        last_analyzed_str = listing.get('last_analyzed_at')
+                        # The timestamp from DB is naive, so we assume UTC
+                        last_analyzed_at = datetime.fromisoformat(last_analyzed_str).replace(tzinfo=timezone.utc)
+                        
+                        if datetime.now(timezone.utc) - last_analyzed_at > timedelta(hours=24):
+                            logger.info(f"Reaper: Re-analyzing stale listing for {listing.get('name')}.")
+                            iteration_span.set_attribute("listing.reanalyzed", True)
+                            await process_listing(listing, snipe_queue, send_alert=True)
+                    
+                    # Put it back in the queue for future checks
+                    await verification_queue.put(mint_address)
                 else:
                     logger.info(f"Reaper: Listing {mint_address} is no longer active (status: {status}). Updating DB.")
                     await asyncio.to_thread(database.update_listing_status, mint_address, False)
@@ -69,7 +82,7 @@ async def reaper(queue: asyncio.Queue):
         finally:
             # Only call task_done if an item was actually retrieved from the queue
             if mint_address is not None:
-                queue.task_done()
+                verification_queue.task_done()
 
 @tracer.start_as_current_span("process_listing")
 async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool = True):
@@ -163,6 +176,30 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
         current_span.record_exception(e)
         current_span.set_status(trace.Status(trace.StatusCode.ERROR))
 
+@tracer.start_as_current_span("recheck_all_listings")
+async def recheck_all_listings(queue: asyncio.Queue):
+    """
+    Fetches all active listings from the database and re-processes them.
+    """
+    logger.info("--- Starting a full re-check of all active listings ---")
+    current_span = trace.get_current_span()
+    
+    active_listings = await asyncio.to_thread(database.get_all_active_listings)
+    if not active_listings:
+        logger.warning("Re-check initiated, but no active listings found.")
+        return
+
+    logger.info(f"Found {len(active_listings)} active listings to re-process.")
+    current_span.set_attribute("listings_to_reprocess", len(active_listings))
+
+    for i, listing in enumerate(active_listings):
+        logger.info(f"--- Re-processing listing {i+1}/{len(active_listings)} ---")
+        # We set send_alert=True to ensure any new snipes are sent to Discord
+        await process_listing(listing, queue, send_alert=True)
+        await asyncio.sleep(1) # Be respectful to external APIs
+
+    logger.info("--- Full re-check of all active listings complete! ---")
+
 @tracer.start_as_current_span("initial_population")
 async def initial_population(queue: asyncio.Queue):
     """
@@ -239,9 +276,9 @@ async def main():
     if not await asyncio.to_thread(database.get_all_listing_ids):
         await initial_population(snipe_queue)
 
-    discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue))
+    discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue, lambda: recheck_all_listings(snipe_queue)))
     watchdog_task = asyncio.create_task(watchdog(snipe_queue))
-    reaper_task = asyncio.create_task(reaper(verification_queue))
+    reaper_task = asyncio.create_task(reaper(verification_queue, snipe_queue))
     
     await asyncio.gather(discord_task, watchdog_task, reaper_task)
 

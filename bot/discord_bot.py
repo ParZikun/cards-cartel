@@ -12,7 +12,11 @@ import utils
 # --- Configuration ---
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
-ROLE_ID = os.getenv("DISCORD_ROLE_ID")
+ROLE_ID = int(os.getenv("DISCORD_ROLE_ID", 0))
+
+print(f"""***************************************************
+DEBUG: Bot is configured to check for ROLE_ID: {ROLE_ID}
+***************************************************""")
 
 if not BOT_TOKEN or not CHANNEL_ID or not ROLE_ID:
     raise ValueError("DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, and DISCORD_ROLE_ID must be set in the .env file.")
@@ -142,7 +146,7 @@ class CartelBot(commands.Bot):
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue):
+async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: callable):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
@@ -177,6 +181,25 @@ async def start_discord_bot(queue: asyncio.Queue):
             
         view = DealSelectorView(deals)
         await interaction.followup.send(f"Found **{len(deals)}** active deals in the **{category.name}** category. Select one to view details.", view=view, ephemeral=True)
+
+    @bot.tree.command(name="recheck_all", description="Admin: Triggers a full re-analysis of all active listings.")
+    @app_commands.checks.has_role(ROLE_ID)
+    async def recheck_all(interaction: discord.Interaction):
+        """Handles the /recheck_all command."""
+        await interaction.response.send_message(
+            "✅ **Acknowledged!** Starting a full re-check of all active listings. "
+            "This may take some time. Any new deals found will be posted.",
+            ephemeral=True
+        )
+        # Run the callback in the background
+        asyncio.create_task(recheck_all_callback())
+
+    @recheck_all.error
+    async def recheck_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.MissingRole):
+            await interaction.response.send_message("❌ You do not have the required role to use this command.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
 
     try:
         await bot.start(BOT_TOKEN)

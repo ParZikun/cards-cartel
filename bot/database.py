@@ -40,7 +40,8 @@ def init_db():
         alt_value_upper_bound REAL,
         alt_value_confidence REAL,
         cartel_category TEXT NOT NULL DEFAULT 'NEW',
-        is_listed BOOLEAN DEFAULT 1
+        is_listed BOOLEAN DEFAULT 1,
+        last_analyzed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """)
     conn.commit()
@@ -69,8 +70,8 @@ def save_listing(listings: list):
 
 def update_listing(listing_id: str, alt_data: dict, cartel_category: str):
     """
-    Updates an existing listing with its enriched ALT data and final category.
-    This is now the single function for updating a processed listing.
+    Updates an existing listing with its enriched ALT data and final category,
+    and updates the last_analyzed_at timestamp.
     """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -79,7 +80,8 @@ def update_listing(listing_id: str, alt_data: dict, cartel_category: str):
     UPDATE listings SET 
         alt_asset_id = ?, alt_value = ?, avg_price = ?, supply = ?, 
         alt_value_lower_bound = ?, alt_value_upper_bound = ?, alt_value_confidence = ?, 
-        cartel_category = ?
+        cartel_category = ?,
+        last_analyzed_at = CURRENT_TIMESTAMP
     WHERE listing_id = ?
     """, (
         alt_data.get('alt_asset_id'), alt_data.get('alt_value'), alt_data.get('avg_price'),
@@ -184,6 +186,27 @@ def get_listing_by_id(listing_id: str) -> dict | None:
     cursor = conn.cursor()
     
     cursor.execute("SELECT * FROM listings WHERE listing_id = ?", (listing_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_all_active_listings() -> list[dict]:
+    """Fetches all listings that are currently marked as listed."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM listings WHERE is_listed = 1")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_listing_by_mint(mint_address: str) -> dict | None:
+    """Fetches all details for a single listing by its mint address."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM listings WHERE token_mint = ?", (mint_address,))
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None

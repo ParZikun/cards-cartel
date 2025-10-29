@@ -56,7 +56,9 @@ def initialize_database():
                 grading_id TEXT, token_mint TEXT, price_amount REAL, price_currency TEXT,
                 listed_at TEXT, alt_value REAL, avg_price REAL, supply INTEGER,
                 alt_asset_id TEXT, alt_value_lower_bound REAL, alt_value_upper_bound REAL,
-                alt_value_confidence REAL, cartel_category TEXT NOT NULL DEFAULT 'NEW'
+                alt_value_confidence REAL, cartel_category TEXT NOT NULL DEFAULT 'NEW',
+                is_listed BOOLEAN NOT NULL DEFAULT 1,
+                last_analyzed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()

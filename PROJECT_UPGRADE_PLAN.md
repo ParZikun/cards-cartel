@@ -48,10 +48,12 @@ These features can be tested on Discord before being implemented in the web dash
     4.  **Re-process Loop:** This background task will loop through the list of active listings. For each listing, it will call the `process_listing` function (the same one used by the watchdog). A small `await asyncio.sleep(1)` should be added between each call to avoid API rate-limiting.
     5.  **User Feedback:** The bot should send an initial response like "✅ Starting a re-check of all X active listings. This may take some time." and potentially a final message upon completion.
 
-### 2.4. Enhancement: Automated Re-checking Service
+### 2.4. Enhancement: Automated Re-checking Service - COMPLETED
 
 -   **Note:** The user's idea for a background re-checking service is excellent. This can be an enhancement of the existing `reaper` task.
 -   **Proposal:**
     -   The `reaper` task currently checks if a listing has been *delisted*.
     -   We can enhance its logic: if a listing is still active but hasn't been re-analyzed in over 24 hours (we would need to add a `last_analyzed_at` timestamp to the database), the reaper can trigger the `process_listing` function for it.
     -   This would automate the process of finding new snipes in old listings, fully realizing the goal of Feature 2.3 without manual intervention.
+
+### 2.5 Add a command to check a particular card and pull its latest details based on the mint tokn address
