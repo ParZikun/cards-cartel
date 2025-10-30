@@ -13,17 +13,17 @@ else:
 
 import time
 import asyncio
-import database
+from database import core as database
 
 # --- Tracing Imports ---
 from opentelemetry import trace
-import tracing
+from .core import tracing
 
 # Import the new async functions
-import get_magic_eden_data as me
-import get_alt_data as alt
-import utils as utils
-import discord_bot as discord_bot
+from .core import magic_eden as me
+from .core import alt_data as alt
+from .core import utils as utils
+from . import discord_bot as discord_bot
 from datetime import datetime, timezone, timedelta
 
 # --- Setup Logging ---
@@ -31,7 +31,7 @@ with open('logging_config.yaml', 'r') as f:
     config = yaml.safe_load(f.read())
     logging.config.dictConfig(config)
 logger = logging.getLogger(__name__)
-if os.path.exists('.env.local'): logger.info("Loading configuration from .env.local for local testing.")
+if os.path.exists('worker/.env.local'): logger.info("Loading configuration from .env.local for local testing.")
 
 # --- Setup Tracing ---
 # This will be used to create spans

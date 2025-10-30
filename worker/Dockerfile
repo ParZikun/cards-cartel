@@ -5,13 +5,16 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # 3. Copy only the requirements file first to leverage Docker's caching
-COPY requirements.txt .
+COPY worker/requirements.txt .
 
 # 4. Install the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copy the rest of your application's code into the container
-COPY . .
+# 5. Copy the shared database module
+COPY database/ ./database/
 
-# 6. Specify the command to run when the container starts
-CMD ["python3", "main.py"]
+# 6. Copy the worker application code
+COPY worker/ ./worker/
+
+# 7. Specify the command to run when the container starts
+CMD ["python3", "worker/main.py"]

@@ -5,8 +5,8 @@ import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-import database
-import get_magic_eden_data
+from database import core as database
+from .core import magic_eden as me
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ async def recheck_listings():
         
         if now - listed_at > timedelta(hours=24):
             logger.info(f"Re-checking listing: {listing['listing_id']}")
-            status = await get_magic_eden_data.check_listing_status_async(listing['token_mint'])
+            status = await me.check_listing_status_async(listing['token_mint'])
             
             if status != 'listed':
                 logger.info(f"Listing {listing['listing_id']} is no longer active. Updating status to unlisted.")

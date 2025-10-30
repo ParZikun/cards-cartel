@@ -7,11 +7,11 @@ from discord import app_commands, ui, SelectOption
 from discord.ext import commands
 
 # Project imports
-from discord_embeds import create_snipe_embed, create_card_check_embed
-from get_magic_eden_data import check_listing_status_async
-from get_alt_data import get_alt_data_async
-import database
-import utils
+from .core.discord_embeds import create_snipe_embed, create_card_check_embed
+from .core.magic_eden import check_listing_status_async
+from .core.alt_data import get_alt_data_async
+from database import core as database
+from .core import utils
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def _reconstruct_embed_data(deal_data: dict):
         'listed_at': deal_data['listed_at'],
     }
 
-    prices = await utils.get_price_in_both_currencies(deal_data['price_amount'], deal_data['price_currency'])
+    prices = await utils.get_price_in_both_currencies(deal_data['price_amount'], deal_data['price_currency']) # This function is async now
     listing_price_usd = prices['price_usdc'] if prices else 0
     alt_value = deal_data.get('alt_value', 0)
     
