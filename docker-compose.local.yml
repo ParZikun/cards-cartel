@@ -1,20 +1,20 @@
-# PRODUCTION DOCKER-COMPOSE
-# Use this file for production deployments.
-# It uses the .env file for environment variables.
+# LOCAL DEVELOPMENT DOCKER-COMPOSE
+# Use this file for local testing.
+# It uses the .env.local file for environment variables.
 #
-# To run: make prod-up
-# To stop: make prod-down
-# To view logs: make prod-logs
+# To run: make local-up
+# To stop: make local-down
+# To view logs: make local-logs
 
 services:
   # --- The Sniper Bot Service ---
   bot:
     build: ./bot
-    container_name: sniper-bot
+    container_name: sniper-bot-local
     volumes:
       - ./data:/app/data
     env_file:
-      - ./.env        # Use production environment variables
+      - ./.env.local  # Use local environment variables
     environment:
       - OTEL_EXPORTER_TYPE=JAEGER
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
@@ -23,13 +23,13 @@ services:
   # --- The API Service ---
   api:
     build: ./api
-    container_name: sniper-api
+    container_name: sniper-api-local
     ports:
       - "5000:5000"
     volumes:
       - ./data:/app/data
     env_file:
-      - ./.env # Use production environment variables
+      - ./.env.local # Use local environment variables
     depends_on:
       - bot
     restart: always
@@ -37,7 +37,7 @@ services:
   # --- Jaeger Tracing Service ---
   jaeger:
     image: cr.jaegertracing.io/jaegertracing/jaeger:latest
-    container_name: jaeger
+    container_name: jaeger-local
     ports:
       - "16686:16686"
       - "4317:4317"

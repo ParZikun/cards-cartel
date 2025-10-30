@@ -1,6 +1,6 @@
-import requests
+import httpx
 import json
-import time
+import asyncio
 import logging
 
 # Initialize a logger for this module
@@ -16,6 +16,9 @@ HEADERS = {
     'Origin': 'https://magiceden.io',
     'Referer': 'https://magiceden.io/'
 }
+
+# Create a single, reusable async client
+async_client = httpx.AsyncClient(headers=HEADERS, timeout=10)
 
 def _get_attribute_value(attributes_list: list, target_trait: str):
     """Finds the value for a specific traitType within a list of attributes."""
@@ -54,7 +57,6 @@ def _process_listing(listing: dict):
     grade_num_str = _get_attribute_value(attributes, "GradeNum")
     insured_value_str = _get_attribute_value(attributes, "Insured Value")
     
-    # --- Professionalization: Added robust type conversion ---
     try:
         grade_num = float(grade_num_str) if grade_num_str is not None else 0.0
         insured_value = float(insured_value_str) if insured_value_str is not None else 0.0
@@ -85,31 +87,29 @@ def _process_listing(listing: dict):
         'listed_at': listing.get('updatedAt'), 
     }
 
-def _fetch_with_retries(url: str, params: dict, retries: int = 3, delay: int = 5):
-    """Handles API calls with error handling, retries, and proper logging."""
+async def _fetch_with_retries_async(url: str, params: dict, retries: int = 3, delay: int = 5):
+    """Handles API calls asynchronously with error handling and retries."""
     for i in range(retries):
         try:
-            response = requests.get(url, headers=HEADERS, params=params, timeout=10)
+            response = await async_client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
             return data.get('results', [])
-        except requests.exceptions.RequestException as e:
-            # --- Professionalization: Changed print to logger.warning ---
+        except httpx.RequestError as e:
             logger.warning(f"ME API connection error (attempt {i+1}/{retries}): {e}")
-            time.sleep(delay)
-    # --- Professionalization: Changed print to logger.critical ---
+            await asyncio.sleep(delay)
     logger.critical("ME API fetch failed after multiple retries. The service may be down.")
     return None
 
-def _fetch_listings(processed_ids: set | None, limit: int = 100):
-    """Unified fetch function for the new API."""
+async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
+    """Unified async fetch function for the new API."""
     base_url = "https://api-mainnet.magiceden.us/idxv2/getListedNftsByCollectionSymbol"
     
     params = {
         'collectionSymbol': 'collector_crypt',
         'limit': limit,
-        'direction': 1, # Your logic: Sort Ascending (Oldest First)
-        'field': 2,     # Your logic: Sort by listing time
+        'direction': 1,
+        'field': 2,
         'attributes': json.dumps([
             {"attributes": [{"traitType": "Category", "value": "Pokemon"}]},
             {"attributes": [
@@ -126,7 +126,7 @@ def _fetch_listings(processed_ids: set | None, limit: int = 100):
     }
     
     new_listings = []
-    raw_listings = _fetch_with_retries(base_url, params)
+    raw_listings = await _fetch_with_retries_async(base_url, params)
     
     if not raw_listings:
         return new_listings
@@ -142,46 +142,41 @@ def _fetch_listings(processed_ids: set | None, limit: int = 100):
                 else:
                     processed_ids.add(listing_id)
             else:
-                # This is a useful debug log to show the optimization is working
-                # logger.debug(f"Stopping search: Hit previously processed ID {listing_id}")
                 break
-        else: # This block is for initial population
+        else:
             processed = _process_listing(listing)
             if processed:
                 new_listings.append(processed)
                 
     return new_listings
 
-def fetch_initial_listings(limit: int = 100):
-    """Fetches a specific number of recent listings for initial DB population."""
-    # --- Professionalization: Changed print to logger.info ---
+async def fetch_initial_listings_async(limit: int = 100):
+    """Fetches a specific number of recent listings for initial DB population, asynchronously."""
     logger.info(f"Fetching latest {limit} listings to populate database...")
-    initial_listings = _fetch_listings(None, limit=limit)
+    initial_listings = await _fetch_listings_async(None, limit=limit)
     processed_ids = {listing['listing_id'] for listing in initial_listings if listing and listing.get('listing_id')}
     return initial_listings, processed_ids
 
-def fetch_new_listings(processed_ids: set):
-    """Fetches the most recent listings and filters out any already processed."""
-    return _fetch_listings(processed_ids=processed_ids, limit=100)
+async def fetch_new_listings_async(processed_ids: set):
+    """Fetches the most recent listings asynchronously and filters out any already processed."""
+    return await _fetch_listings_async(processed_ids=processed_ids, limit=100)
 
-def check_listing_status(mint_address: str) -> str:
+async def check_listing_status_async(mint_address: str) -> str | None:
     """
-    Checks a single listing's status using the /v2/tokens/{mint} endpoint.
-    Returns 'listed', 'unlisted', or 'not_found'.
+    Checks a single card's data asynchronously using the /v2/tokens/{mint} endpoint.
+    Returns the full card data dictionary, or 'not_found'.
     """
     url = f"https://api-mainnet.magiceden.dev/v2/tokens/{mint_address}"
     try:
-        # Using the same HEADERS as other requests in this file
-        response = requests.get(url, headers=HEADERS, timeout=10)
+        response = await async_client.get(url)
         if response.status_code == 200:
             data = response.json()
-            # Default to 'unlisted' if key is missing for safety
-            return data.get("listStatus", "unlisted")
+            return data
         elif response.status_code == 404:
             return "not_found"
         else:
             logger.warning(f"ME API returned status {response.status_code} for {mint_address} during status check.")
-            return "unlisted" # Treat other errors as 'unlisted' to be safe
-    except requests.exceptions.RequestException as e:
+            return None
+    except httpx.RequestError as e:
         logger.error(f"Request failed for {mint_address} status check: {e}")
-        return "unlisted" # Treat request failures as 'unlisted'
+        return None

@@ -1,14 +1,12 @@
 import os
-import requests
-import time
-from dotenv import load_dotenv
+import httpx
+import asyncio
 from datetime import datetime, timedelta
 from collections import defaultdict
 import logging
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
 GRAPHQL_URL = "https://alt-platform-server.production.internal.onlyalt.com/graphql/"
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 COOKIE = os.getenv("COOKIE")
@@ -26,12 +24,14 @@ HEADERS = {
     'Cookie': COOKIE
 }
 
+# Create a single, reusable async client
+async_client = httpx.AsyncClient(headers=HEADERS, timeout=5)
+
 CERT_ID_TO_ASSET_ID_CACHE = {}
 
-def get_asset_id(cert_id: str, retries: int = 3, delay: int = 2):
+async def get_asset_id_async(cert_id: str, retries: int = 3, delay: int = 2):
     """
-    Looks up an asset's internal ID using its certification number.
-    This is the crucial mapping function.
+    Looks up an asset's internal ID using its certification number, asynchronously.
     """
     payload = {
         "operationName": "Cert",
@@ -40,7 +40,7 @@ def get_asset_id(cert_id: str, retries: int = 3, delay: int = 2):
     }
     for attempt in range(retries):
         try:
-            response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=payload, timeout=5)
+            response = await async_client.post(url=GRAPHQL_URL, json=payload)
             response.raise_for_status()
             data = response.json()
             
@@ -51,21 +51,21 @@ def get_asset_id(cert_id: str, retries: int = 3, delay: int = 2):
                 logger.warning(f"Cert ID '{cert_id}' not found on ALT. This is not an error.")
                 return None
                 
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"ALT API call (get_asset_id) failed for cert '{cert_id}' on attempt {attempt + 1}: {e}")
+        except httpx.RequestError as e:
+            logger.warning(f"ALT API call (get_asset_id_async) failed for cert '{cert_id}' on attempt {attempt + 1}: {e}")
             if attempt < retries - 1:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
 
     logger.error(f"Failed to get asset_id for cert '{cert_id}' after {retries} attempts.")
     return None
 
-def get_alt_data(cert_id: str, grade: str, company: str, retries: int = 3, delay: int = 3):
+async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: int = 3, delay: int = 3):
     """
-    Main orchestrator function. Returns a dict with: alt_value, avg_price, supply, and confidence data.
+    Main async orchestrator. Returns a dict with: alt_value, avg_price, supply, and confidence data.
     """
     asset_id = CERT_ID_TO_ASSET_ID_CACHE.get(cert_id)
     if not asset_id:
-        asset_id = get_asset_id(cert_id)
+        asset_id = await get_asset_id_async(cert_id)
         if not asset_id: return None
         CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset_id
     
@@ -131,9 +131,12 @@ def get_alt_data(cert_id: str, grade: str, company: str, retries: int = 3, delay
     
     for attempt in range(retries):
         try:
-            details_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=details_payload, timeout=5)
+            # Run both GraphQL queries concurrently
+            details_response, trans_response = await asyncio.gather(
+                async_client.post(url=GRAPHQL_URL, json=details_payload),
+                async_client.post(url=GRAPHQL_URL, json=trans_payload)
+            )
             details_response.raise_for_status()
-            trans_response = requests.post(url=GRAPHQL_URL, headers=HEADERS, json=trans_payload, timeout=5)
             trans_response.raise_for_status()
 
             details_data = details_response.json().get('data', {}).get('asset', {}) or {}
@@ -174,26 +177,30 @@ def get_alt_data(cert_id: str, grade: str, company: str, retries: int = 3, delay
                 "upper_bound": confidence_data.get('currentErrorUpperBound') or 0.0,
                 "confidence": confidence_data.get('currentConfidenceMetric') or 0.0
             }
-        except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             logger.warning(f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1}: {e}")
             if attempt < retries - 1:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
+    return None # Explicitly return None if all retries fail
 
-# --- SANITY TEST ---
+# --- SANITY TEST --- 
 if __name__ == "__main__":
-    example_cert_id = "114234980"
-    example_grade = "9"
-    example_company = "PSA"
-    
-    print("--- Running Standalone Test ---")
-    processed_data = get_alt_data(example_cert_id, example_grade, example_company)
-    
-    if processed_data:
-        print("\n--- Processed Data ---")
-        print(f"  - Asset id: {processed_data['alt_asset_id']}")
-        print(f"  - Supply (Pop Count): {processed_data['supply']}")
-        print(f"  - Alt Value: ${processed_data['alt_value']:.2f} (Confidence: {processed_data['confidence']}%)")
-        print(f"  - Value Range: ${processed_data['lower_bound']:.2f} - ${processed_data['upper_bound']:.2f}")
-        print(f"  - Calculated Avg. Price: ${processed_data['avg_price']:.2f}")
-    else:
-        print("\nCould not fetch and process ALT data for the given card.")
+    async def run_test():
+        example_cert_id = "114234980"
+        example_grade = "9"
+        example_company = "PSA"
+        
+        print("--- Running Standalone Async Test ---")
+        processed_data = await get_alt_data_async(example_cert_id, example_grade, example_company)
+        
+        if processed_data:
+            print("\n--- Processed Data ---")
+            print(f"  - Asset id: {processed_data['alt_asset_id']}")
+            print(f"  - Supply (Pop Count): {processed_data['supply']}")
+            print(f"  - Alt Value: ${processed_data['alt_value']:.2f} (Confidence: {processed_data['confidence']}%)")
+            print(f"  - Value Range: ${processed_data['lower_bound']:.2f} - ${processed_data['upper_bound']:.2f}")
+            print(f"  - Calculated Avg. Price: ${processed_data['avg_price']:.2f}")
+        else:
+            print("\nCould not fetch and process ALT data for the given card.")
+
+    asyncio.run(run_test())

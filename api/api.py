@@ -56,7 +56,9 @@ def initialize_database():
                 grading_id TEXT, token_mint TEXT, price_amount REAL, price_currency TEXT,
                 listed_at TEXT, alt_value REAL, avg_price REAL, supply INTEGER,
                 alt_asset_id TEXT, alt_value_lower_bound REAL, alt_value_upper_bound REAL,
-                alt_value_confidence REAL, cartel_category TEXT NOT NULL DEFAULT 'NEW'
+                alt_value_confidence REAL, cartel_category TEXT NOT NULL DEFAULT 'NEW',
+                is_listed BOOLEAN NOT NULL DEFAULT 1,
+                last_analyzed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
@@ -128,7 +130,7 @@ if __name__ == '__main__':
     # 2. Generate a self-signed certificate and key:
     #    openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
     # 3. Uncomment the line below and update the paths to your cert.pem and key.pem files.
-    serve(app, host="0.0.0.0", port=5000, url_scheme='https', ssl_context=('../cert.pem', '../key.pem'))
+    # app.run(host="0.0.0.0", port=5000, ssl_context=('/app/cert.pem', '/app/key.pem'))
 
     # The current default is HTTP:
-    # serve(app, host="0.0.0.0", port=5000)
+    serve(app, host="0.0.0.0", port=5000)
