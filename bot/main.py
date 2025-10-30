@@ -44,22 +44,45 @@ async def reaper(verification_queue: asyncio.Queue, snipe_queue: asyncio.Queue):
     logger.info("--- Starting Reaper ---")
     while True:
         mint_address = None
+        iteration_span = None
         try:
             # Start a new span for each item pulled from the queue
             with tracer.start_as_current_span("reaper_iteration") as iteration_span:
                 mint_address = await verification_queue.get()
                 iteration_span.set_attribute("mint_address", mint_address)
-                
-                status = await me.check_listing_status_async(mint_address)
-                iteration_span.set_attribute("listing.status", status)
 
-                if status == "listed":
+                card_data = await me.check_listing_status_async(mint_address)
+                
+                # Ensure the status attribute is always a string and never None.
+                status_attribute = "unknown"
+                if isinstance(card_data, dict): status_attribute = card_data.get('listStatus', 'unknown')
+                elif card_data is not None: status_attribute = str(card_data)
+                iteration_span.set_attribute("listing.status", status_attribute)
+            
+                # Only treat it as "listed" if the returned data is a dict containing that key.
+                if isinstance(card_data, dict) and card_data.get('listStatus') == "listed":
                     # If still listed, check if it needs re-analysis
                     listing = await asyncio.to_thread(database.get_listing_by_mint, mint_address)
                     if listing:
                         last_analyzed_str = listing.get('last_analyzed_at')
                         # The timestamp from DB is naive, so we assume UTC
-                        last_analyzed_at = datetime.fromisoformat(last_analyzed_str).replace(tzinfo=timezone.utc)
+                        # Safely handle missing or non-string timestamps
+                        last_analyzed_at = None
+                        if not last_analyzed_str:
+                            # treat missing timestamp as very old so it will be re-analyzed
+                            last_analyzed_at = datetime.fromtimestamp(0, tz=timezone.utc)
+                        elif isinstance(last_analyzed_str, str):
+                            # parse ISO string and ensure timezone-aware (assume UTC)
+                            last_analyzed_at = datetime.fromisoformat(last_analyzed_str)
+                            if last_analyzed_at.tzinfo is None:
+                                last_analyzed_at = last_analyzed_at.replace(tzinfo=timezone.utc)
+                        elif isinstance(last_analyzed_str, datetime):
+                            last_analyzed_at = last_analyzed_str
+                            if last_analyzed_at.tzinfo is None:
+                                last_analyzed_at = last_analyzed_at.replace(tzinfo=timezone.utc)
+                        else:
+                            # Fallback: treat as very old
+                            last_analyzed_at = datetime.fromtimestamp(0, tz=timezone.utc)
                         
                         if datetime.now(timezone.utc) - last_analyzed_at > timedelta(hours=24):
                             logger.info(f"Reaper: Re-analyzing stale listing for {listing.get('name')}.")
@@ -69,14 +92,14 @@ async def reaper(verification_queue: asyncio.Queue, snipe_queue: asyncio.Queue):
                     # Put it back in the queue for future checks
                     await verification_queue.put(mint_address)
                 else:
-                    logger.info(f"Reaper: Listing {mint_address} is no longer active (status: {status}). Updating DB.")
+                    logger.info(f"Reaper: Listing {mint_address} is no longer active. Updating DB.")
                     await asyncio.to_thread(database.update_listing_status, mint_address, False)
 
                 await asyncio.sleep(0.55)
         except Exception as e:
             logger.error(f"Error in reaper task: {e}", exc_info=True)
             # Ensure the span is recorded in case of an error
-            if 'iteration_span' in locals():
+            if iteration_span is not None:
                 iteration_span.record_exception(e)
                 iteration_span.set_status(trace.Status(trace.StatusCode.ERROR))
         finally:
@@ -94,9 +117,13 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
     
     current_span = trace.get_current_span()
     # Add key details to the span to make it searchable
-    current_span.set_attribute("listing.id", listing.get('listing_id'))
-    current_span.set_attribute("listing.name", listing.get('name'))
-    current_span.set_attribute("listing.grade_id", listing.get('grading_id'))
+    # Ensure we never pass None to set_attribute by coercing to safe types/defaults
+    listing_id_attr = str(listing.get('listing_id')) if listing.get('listing_id') is not None else "unknown"
+    listing_name_attr = listing.get('name') or "unknown"
+    listing_grade_id_attr = str(listing.get('grading_id')) if listing.get('grading_id') is not None else "unknown"
+    current_span.set_attribute("listing.id", listing_id_attr)
+    current_span.set_attribute("listing.name", listing_name_attr)
+    current_span.set_attribute("listing.grade_id", listing_grade_id_attr)
 
     try:
         processed_alt_data = await alt.get_alt_data_async(

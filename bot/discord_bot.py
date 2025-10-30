@@ -1,22 +1,24 @@
 import os
 import discord
 import asyncio
+from typing import cast, Callable, Awaitable
 from discord import app_commands, ui, SelectOption
 from discord.ext import commands
 
 # Project imports
-from discord_embeds import create_snipe_embed
+from discord_embeds import create_snipe_embed, create_card_check_embed
+from get_magic_eden_data import check_listing_status_async
+from get_alt_data import get_alt_data_async
 import database
 import utils
 
 # --- Configuration ---
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("DISCORD_BOT_TOKEN environment variable is not set")
+
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", 0))
 ROLE_ID = int(os.getenv("DISCORD_ROLE_ID", 0))
-
-print(f"""***************************************************
-DEBUG: Bot is configured to check for ROLE_ID: {ROLE_ID}
-***************************************************""")
 
 if not BOT_TOKEN or not CHANNEL_ID or not ROLE_ID:
     raise ValueError("DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, and DISCORD_ROLE_ID must be set in the .env file.")
@@ -113,14 +115,15 @@ class CartelBot(commands.Bot):
 
     async def on_ready(self):
         print(f"✅ Discord bot logged in as {self.user}")
-
     async def snipe_consumer_loop(self):
         await self.wait_until_ready()
         channel = self.get_channel(CHANNEL_ID)
-        if not channel:
-            print("❌ FATAL ERROR: Snipe consumer could not find channel.")
+        # Ensure we have a messageable channel (some channel types like CategoryChannel/ForumChannel are not messageable)
+        if not channel or not hasattr(channel, "send"):
+            print("❌ FATAL ERROR: Snipe consumer could not find a messageable channel.")
             return
-        print(f"Snipe consumer ready to post in #{channel.name}.")
+        channel_name = getattr(channel, "name", str(CHANNEL_ID))
+        print(f"Snipe consumer ready to post in #{channel_name}.")
 
         while True:
             try:
@@ -134,7 +137,9 @@ class CartelBot(commands.Bot):
                 embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration)
                 ping_message = f"<@&{ROLE_ID}>" if alert_level.upper() != 'INFO' else ""
                 
-                await channel.send(content=ping_message, embed=embed)
+                # Cast to Messageable to satisfy static type-checkers after the runtime check above
+                messageable = cast(discord.abc.Messageable, channel)
+                await messageable.send(content=ping_message, embed=embed)
                 print(f"    -> Sent {alert_level} alert to Discord for: {listing_data['name']}")
 
             except discord.errors.Forbidden:
@@ -143,10 +148,11 @@ class CartelBot(commands.Bot):
                 print(f"    ❌ An error occurred in the Discord consumer loop: {e}")
             finally:
                 self.snipe_queue.task_done()
+                self.snipe_queue.task_done()
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: callable):
+async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable[[], Awaitable[None]]):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
@@ -182,24 +188,42 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: callable
         view = DealSelectorView(deals)
         await interaction.followup.send(f"Found **{len(deals)}** active deals in the **{category.name}** category. Select one to view details.", view=view, ephemeral=True)
 
-    @bot.tree.command(name="find_card", description="Finds a card by its mint address.")
-    @app_commands.describe(mint_address="The mint address of the card to find.")
-    async def find_card(interaction: discord.Interaction, mint_address: str):
-        """Handles the /find_card command."""
+    @bot.tree.command(name="check_card", description="Checks the status of a card by its mint address.")
+    @app_commands.describe(mint_address="The mint address of the card to check.")
+    async def check_card(interaction: discord.Interaction, mint_address: str):
+        """Handles the /check_card command."""
         await interaction.response.defer(ephemeral=True, thinking=True)
-        
-        deal_data = await asyncio.to_thread(database.get_listing_by_mint, mint_address)
-        
-        if not deal_data:
+
+        card_data = await check_listing_status_async(mint_address)
+
+        if not card_data or card_data == 'not_found' or isinstance(card_data, str):
             await interaction.followup.send(f"Sorry, I couldn't find a card with the mint address `{mint_address}`.", ephemeral=True)
             return
-            
-        listing_data, snipe_details = _reconstruct_embed_data(deal_data)
-        alert_level = deal_data.get('cartel_category', 'INFO')
-        embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration=0.0)
+
+        attrs = card_data.get('attributes') or []
+        if not isinstance(attrs, list):
+            attrs = []
+
+        attributes = {}
+        for attr in attrs:
+            if isinstance(attr, dict):
+                trait = attr.get('trait_type')
+                value = attr.get('value')
+                if trait is not None:
+                    attributes[trait] = value
+
+        cert_id = attributes.get('Grading ID')
+        grade_num = attributes.get('GradeNum')
+        company = attributes.get('Grading Company')
+
+        alt_data = None
+        if cert_id and grade_num and company:
+            alt_data = await get_alt_data_async(cert_id, grade_num, company)
+
+        embed = create_card_check_embed(card_data, alt_data)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @bot.tree.command(name=\"recheck_all\", description=\"Admin: Triggers a full re-analysis of all active listings.\")
+    @bot.tree.command(name="recheck_all", description="Admin: Triggers a full re-analysis of all active listings.")
     @app_commands.checks.has_role(ROLE_ID)
     async def recheck_all(interaction: discord.Interaction):
         """Handles the /recheck_all command."""
@@ -209,7 +233,7 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: callable
             ephemeral=True
         )
         # Run the callback in the background
-        asyncio.create_task(recheck_all_callback())
+        await recheck_all_callback()
 
     @recheck_all.error
     async def recheck_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -219,6 +243,6 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: callable
             await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
 
     try:
-        await bot.start(BOT_TOKEN)
+        await bot.start(str(BOT_TOKEN))
     except discord.errors.LoginFailure:
         print("❌ LOGIN FAILED: The DISCORD_BOT_TOKEN in your .env file is invalid.")

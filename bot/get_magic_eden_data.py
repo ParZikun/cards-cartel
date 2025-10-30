@@ -161,22 +161,22 @@ async def fetch_new_listings_async(processed_ids: set):
     """Fetches the most recent listings asynchronously and filters out any already processed."""
     return await _fetch_listings_async(processed_ids=processed_ids, limit=100)
 
-async def check_listing_status_async(mint_address: str) -> str:
+async def check_listing_status_async(mint_address: str) -> str | None:
     """
-    Checks a single listing's status asynchronously using the /v2/tokens/{mint} endpoint.
-    Returns 'listed', 'unlisted', or 'not_found'.
+    Checks a single card's data asynchronously using the /v2/tokens/{mint} endpoint.
+    Returns the full card data dictionary, or 'not_found'.
     """
     url = f"https://api-mainnet.magiceden.dev/v2/tokens/{mint_address}"
     try:
         response = await async_client.get(url)
         if response.status_code == 200:
             data = response.json()
-            return data.get("listStatus", "unlisted")
+            return data
         elif response.status_code == 404:
             return "not_found"
         else:
             logger.warning(f"ME API returned status {response.status_code} for {mint_address} during status check.")
-            return "unlisted"
+            return None
     except httpx.RequestError as e:
         logger.error(f"Request failed for {mint_address} status check: {e}")
-        return "unlisted"
+        return None

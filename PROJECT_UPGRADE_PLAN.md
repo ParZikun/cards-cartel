@@ -32,7 +32,6 @@ Before adding more complex features, we should strengthen the application's foun
 
 ### 1.3 Add Certificate to the API so that we can read it officially from https and not http so it is more secure
 
-
 ----
 
 ### Rough TODO
