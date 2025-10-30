@@ -27,7 +27,7 @@ if not BOT_TOKEN or not CHANNEL_ID or not ROLE_ID:
     raise ValueError("DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, and DISCORD_ROLE_ID must be set in the .env file.")
 
 # --- Helper function to reconstruct embed data ---
-def _reconstruct_embed_data(deal_data: dict):
+async def _reconstruct_embed_data(deal_data: dict):
     """
     Takes a flat dictionary from the database and reconstructs the
     listing_data and snipe_details dictionaries needed for the embed.
@@ -48,7 +48,7 @@ def _reconstruct_embed_data(deal_data: dict):
         'listed_at': deal_data['listed_at'],
     }
 
-    prices = utils.get_price_in_both_currencies(deal_data['price_amount'], deal_data['price_currency'])
+    prices = await utils.get_price_in_both_currencies(deal_data['price_amount'], deal_data['price_currency'])
     listing_price_usd = prices['price_usdc'] if prices else 0
     alt_value = deal_data.get('alt_value', 0)
     
@@ -93,7 +93,7 @@ class DealSelect(ui.Select):
             await interaction.followup.send("Sorry, I couldn't find the details for that deal.", ephemeral=True)
             return
             
-        listing_data, snipe_details = _reconstruct_embed_data(deal_data)
+        listing_data, snipe_details = await _reconstruct_embed_data(deal_data)
         alert_level = deal_data.get('cartel_category', 'INFO')
         embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration=0.0)
         await interaction.followup.send(embed=embed, ephemeral=True)

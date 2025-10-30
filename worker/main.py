@@ -23,7 +23,7 @@ import tracing
 import get_magic_eden_data as me
 import get_alt_data as alt
 import utils as utils
-import worker.discord_bot as discord_bot
+import discord_bot as discord_bot
 from datetime import datetime, timezone, timedelta
 
 # --- Setup Logging ---
