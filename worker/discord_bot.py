@@ -1,5 +1,6 @@
 import os
 import discord
+import logging
 import asyncio
 from typing import cast, Callable, Awaitable
 from discord import app_commands, ui, SelectOption
@@ -11,6 +12,8 @@ from get_magic_eden_data import check_listing_status_async
 from get_alt_data import get_alt_data_async
 import database
 import utils
+
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -110,20 +113,21 @@ class CartelBot(commands.Bot):
     async def setup_hook(self):
         # This is the proper way to start a background task.
         self.loop.create_task(self.snipe_consumer_loop())
-        await self.tree.sync()
-        print("✅ Slash commands synced.")
+        # Only sync when commands change to avoid rate limits.
+        # await self.tree.sync() 
+        logging.info("Discord bot setup hook complete. Consumer loop started.")
 
     async def on_ready(self):
-        print(f"✅ Discord bot logged in as {self.user}")
+        logging.info(f"✅ Discord bot logged in as {self.user}")
     async def snipe_consumer_loop(self):
         await self.wait_until_ready()
         channel = self.get_channel(CHANNEL_ID)
         # Ensure we have a messageable channel (some channel types like CategoryChannel/ForumChannel are not messageable)
         if not channel or not hasattr(channel, "send"):
-            print("❌ FATAL ERROR: Snipe consumer could not find a messageable channel.")
+            logging.critical("❌ FATAL ERROR: Snipe consumer could not find a messageable channel with ID %s.", CHANNEL_ID)
             return
         channel_name = getattr(channel, "name", str(CHANNEL_ID))
-        print(f"Snipe consumer ready to post in #{channel_name}.")
+        logging.info(f"Snipe consumer ready to post in #{channel_name}.")
 
         while True:
             try:
@@ -140,16 +144,15 @@ class CartelBot(commands.Bot):
                 # Cast to Messageable to satisfy static type-checkers after the runtime check above
                 messageable = cast(discord.abc.Messageable, channel)
                 await messageable.send(content=ping_message, embed=embed)
-                print(f"    -> Sent {alert_level} alert to Discord for: {listing_data['name']}")
+                logging.info(f"-> Sent {alert_level} alert to Discord for: {listing_data['name']}")
 
             except discord.errors.Forbidden as e:
-                print(f"    ❌ PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}. Check bot permissions. Error: {e}")
+                logging.error(f"PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}. Check bot permissions. Error: {e}")
             except discord.errors.HTTPException as e:
-                print(f"    ❌ NETWORK ERROR: Failed to send message to Discord. Error: {e}")
+                logging.error(f"NETWORK ERROR: Failed to send message to Discord. Error: {e}")
             except Exception as e: # Catch any other unexpected errors
-                print(f"    ❌ An error occurred in the Discord consumer loop: {e}")
+                logging.exception("An unexpected error occurred in the Discord consumer loop.")
             finally:
-                self.snipe_queue.task_done()
                 self.snipe_queue.task_done()
 
 # --- Main entry point for the bot ---
@@ -247,4 +250,4 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable
     try:
         await bot.start(str(BOT_TOKEN))
     except discord.errors.LoginFailure:
-        print("❌ LOGIN FAILED: The DISCORD_BOT_TOKEN in your .env file is invalid.")
+        logger.critical("❌ LOGIN FAILED: The DISCORD_BOT_TOKEN in your .env file is invalid.")

@@ -1,19 +1,18 @@
 import os
 from dotenv import load_dotenv
+import logging
+import logging.config
+import yaml
 
 # --- Centralized Environment Loading ---
 # Load .env.local for local development, otherwise fall back to .env
 if os.path.exists('.env.local'):
-    print("Loading configuration from .env.local for local testing.")
     load_dotenv(dotenv_path='.env.local')
 else:
     load_dotenv()
 
 import time
 import asyncio
-import yaml
-import logging
-import logging.config
 import database
 
 # --- Tracing Imports ---
@@ -24,7 +23,7 @@ import tracing
 import get_magic_eden_data as me
 import get_alt_data as alt
 import utils as utils
-import discord_bot
+import worker.discord_bot as discord_bot
 from datetime import datetime, timezone, timedelta
 
 # --- Setup Logging ---
@@ -32,6 +31,7 @@ with open('logging_config.yaml', 'r') as f:
     config = yaml.safe_load(f.read())
     logging.config.dictConfig(config)
 logger = logging.getLogger(__name__)
+if os.path.exists('.env.local'): logger.info("Loading configuration from .env.local for local testing.")
 
 # --- Setup Tracing ---
 # This will be used to create spans
@@ -138,7 +138,7 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
             current_span.set_attribute("listing.status", "SKIPPED_NO_ALT_DATA")
             return
 
-        prices = await asyncio.to_thread(utils.get_price_in_both_currencies, listing['price_amount'], listing['price_currency'])
+        prices = await utils.get_price_in_both_currencies(listing['price_amount'], listing['price_currency'])
         if not prices:
             logger.error(f"Could not convert price for {listing.get('name')}. Skipping.")
             current_span.set_attribute("listing.status", "SKIPPED_NO_PRICE_DATA")
