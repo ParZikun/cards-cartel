@@ -142,9 +142,11 @@ class CartelBot(commands.Bot):
                 await messageable.send(content=ping_message, embed=embed)
                 print(f"    -> Sent {alert_level} alert to Discord for: {listing_data['name']}")
 
-            except discord.errors.Forbidden:
-                print(f"    ❌ PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}.")
-            except Exception as e:
+            except discord.errors.Forbidden as e:
+                print(f"    ❌ PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}. Check bot permissions. Error: {e}")
+            except discord.errors.HTTPException as e:
+                print(f"    ❌ NETWORK ERROR: Failed to send message to Discord. Error: {e}")
+            except Exception as e: # Catch any other unexpected errors
                 print(f"    ❌ An error occurred in the Discord consumer loop: {e}")
             finally:
                 self.snipe_queue.task_done()
