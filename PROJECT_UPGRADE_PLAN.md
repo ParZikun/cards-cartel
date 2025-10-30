@@ -22,15 +22,7 @@ Before adding more complex features, we should strengthen the application's foun
     4.  **Schema Migration:** Use `Alembic` (SQLAlchemy's migration tool) to create a script that generates the database schema (tables, columns, etc.) in the new PostgreSQL database.
     5.  **Data Migration:** Create a one-time Python script to read all data from the old `cards.db` SQLite file and insert it into the new PostgreSQL database.
 
-### 1.2. Evolve Backend Architecture
-
--   **Goal:** Refine the backend architecture to better support a separate web frontend and background workers.
--   **Proposal:** Move towards a more defined Service-Oriented Architecture.
-    -   **`Worker Service` (current `bot` container):** Its sole responsibility will be background tasks: watching Magic Eden for new listings, processing items from a queue, and running the reaper/re-analyzer task.
-    -   **`Web API Service` (current `api` container):** This will be a dedicated web server (e.g., using FastAPI) that the future Next.js dashboard will communicate with. Its only job is to read data from the PostgreSQL database and present it via API endpoints (e.g., `/api/v1/deals`). It will not contain any scraping or bot logic.
--   **Why:** This separation of concerns makes the system much cleaner, easier to maintain, and allows us to scale the web application and the background worker independently.
-
-### 1.3 Add Certificate to the API so that we can read it officially from https and not http so it is more secure
+### 1.2 Add Certificate to the API so that we can read it officially from https and not http so it is more secure
 
 ----
 
