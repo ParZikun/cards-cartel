@@ -7,10 +7,10 @@
 # To view logs: make prod-logs
 
 services:
-  # --- The Sniper Bot Service ---
-  bot:
-    build: ./bot
-    container_name: sniper-bot
+  # --- The Background Worker Service ---
+  worker:
+    build: ./worker
+    container_name: sniper-worker
     volumes:
       - ./data:/app/data
     env_file:
@@ -20,19 +20,19 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     restart: always
 
-  # --- The API Service ---
-  api:
-    build: ./api
-    container_name: sniper-api
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - ./.env # Use production environment variables
-    depends_on:
-      - bot
-    restart: always
+  # --- The API Service (Temporarily Disabled) ---
+  # api:
+  #   build: ./api
+  #   container_name: sniper-api
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - ./data:/app/data
+  #   env_file:
+  #     - ./.env # Use production environment variables
+  #   depends_on:
+  #     - worker
+  #   restart: always
 
   # --- Jaeger Tracing Service ---
   jaeger:

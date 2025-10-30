@@ -7,10 +7,10 @@
 # To view logs: make local-logs
 
 services:
-  # --- The Sniper Bot Service ---
-  bot:
-    build: ./bot
-    container_name: sniper-bot-local
+  # --- The Background Worker Service ---
+  worker:
+    build: ./worker
+    container_name: sniper-worker-local
     volumes:
       - ./data:/app/data
     env_file:
@@ -20,19 +20,19 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     restart: always
 
-  # --- The API Service ---
-  api:
-    build: ./api
-    container_name: sniper-api-local
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - ./.env.local # Use local environment variables
-    depends_on:
-      - bot
-    restart: always
+  # --- The API Service (Temporarily Disabled) ---
+  # api:
+  #   build: ./api
+  #   container_name: sniper-api-local
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - ./data:/app/data
+  #   env_file:
+  #     - ./.env.local # Use local environment variables
+  #   depends_on:
+  #     - worker
+  #   restart: always
 
   # --- Jaeger Tracing Service ---
   jaeger:

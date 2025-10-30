@@ -1,0 +1,212 @@
+import sqlite3
+from datetime import datetime, timezone
+from pytz import timezone
+import logging
+
+logger = logging.getLogger(__name__)
+
+# --- Configuration ---
+DB_FILE = "data/listings.db"
+
+def init_db():
+    """
+    Initializes the database and creates the 'listings' table with the final schema.
+    This function is safe to run multiple times.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # The complete table schema to hold all data from ME and ALT
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS listings (
+        listing_id TEXT PRIMARY KEY,
+        name TEXT,
+        grade_num REAL,
+        grade TEXT,
+        category TEXT,
+        insured_value REAL,
+        grading_company TEXT,
+        img_url TEXT,
+        grading_id TEXT,
+        token_mint TEXT,
+        price_amount REAL,
+        price_currency TEXT,
+        listed_at TEXT,
+        alt_value REAL,
+        avg_price REAL,
+        supply INTEGER,
+        alt_asset_id TEXT,
+        alt_value_lower_bound REAL,
+        alt_value_upper_bound REAL,
+        alt_value_confidence REAL,
+        cartel_category TEXT NOT NULL DEFAULT 'NEW',
+        is_listed BOOLEAN DEFAULT 1,
+        last_analyzed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_listing(listings: list):
+    """Saves new listings with a 'NEW' status."""
+    if not listings: return
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    data_to_insert = [(
+        listing.get('listing_id'), listing.get('name'), listing.get('grade'),
+        listing.get('grade_num'), listing.get('category'), listing.get('insured_value'),
+        listing.get('grading_company'), listing.get('img_url'), listing.get('grading_id'),
+        listing.get('token_mint'), listing.get('price_amount'), listing.get('price_currency'),
+        listing.get('listed_at')
+    ) for listing in listings]
+    cursor.executemany("""
+    INSERT OR IGNORE INTO listings (
+        listing_id, name, grade, grade_num, category, insured_value, grading_company,
+        img_url, grading_id, token_mint, price_amount, price_currency, listed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, data_to_insert)
+    conn.commit()
+    conn.close()
+
+def update_listing(listing_id: str, alt_data: dict, cartel_category: str):
+    """
+    Updates an existing listing with its enriched ALT data and final category,
+    and updates the last_analyzed_at timestamp.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    UPDATE listings SET 
+        alt_asset_id = ?, alt_value = ?, avg_price = ?, supply = ?, 
+        alt_value_lower_bound = ?, alt_value_upper_bound = ?, alt_value_confidence = ?, 
+        cartel_category = ?,
+        last_analyzed_at = CURRENT_TIMESTAMP
+    WHERE listing_id = ?
+    """, (
+        alt_data.get('alt_asset_id'), alt_data.get('alt_value'), alt_data.get('avg_price'),
+        alt_data.get('supply'), alt_data.get('lower_bound'), alt_data.get('upper_bound'),
+        alt_data.get('confidence'), cartel_category, listing_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+def skip_listing(listing_id: str, cartel_category: str):
+    """
+    Updates an existing listing with its enriched ALT data and final category.
+    This is now the single function for updating a processed listing.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("UPDATE listings SET cartel_category = ? WHERE listing_id = ?", (cartel_category, listing_id))
+
+    conn.commit()
+    conn.close()
+
+
+def get_unprocessed_listings():
+    """Fetches all listings that have status 'NEW'."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM listings WHERE cartel_category = 'NEW'")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_all_listing_ids() -> set:
+    """Retrieves all listing_ids from the database to prevent duplicate processing."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT listing_id FROM listings")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0] for row in rows}
+
+
+def get_initial_reaper_queue_items() -> list[str]:
+    """Queries the DB for all active, relevant listings to populate the reaper queue."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    # Fetch all listings that we need to monitor
+    cursor.execute("SELECT token_mint FROM listings WHERE is_listed = 1 AND cartel_category != 'SKIP'")
+    rows = cursor.fetchall()
+    conn.close()
+    logger.info(f"Found {len(rows)} items for the initial reaper queue.")
+    return [row['token_mint'] for row in rows]
+
+def update_listing_status(mint_address: str, is_listed: bool):
+    """Updates the is_listed flag for a given listing."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Use integer 1 for True and 0 for False in SQLite
+    is_listed_int = 1 if is_listed else 0
+    cursor.execute("UPDATE listings SET is_listed = ? WHERE token_mint = ?", (is_listed_int, mint_address))
+    conn.commit()
+    conn.close()
+    logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
+
+def get_active_deals_by_category(categories: list, limit: int = 25) -> list[dict]:
+    """
+    Fetches active deals for a given list of cartel_categories.
+    Returns a list of dicts with 'name' and 'listing_id'.
+    """
+    if not categories:
+        return []
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Create a string of placeholders for the IN clause, e.g., (?, ?, ?)
+    placeholders = ', '.join('?' for _ in categories)
+    query = f"""
+        SELECT name, listing_id FROM listings 
+        WHERE is_listed = 1 AND cartel_category IN ({placeholders})
+        ORDER BY listed_at DESC
+        LIMIT ?
+    """
+    
+    params = categories + [limit]
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_listing_by_id(listing_id: str) -> dict | None:
+    """
+    Fetches all details for a single listing by its ID.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM listings WHERE listing_id = ?", (listing_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_all_active_listings() -> list[dict]:
+    """Fetches all listings that are currently marked as listed."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM listings WHERE is_listed = 1")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_listing_by_mint(mint_address: str) -> dict | None:
+    """Fetches all details for a single listing by its mint address."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM listings WHERE token_mint = ?", (mint_address,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
