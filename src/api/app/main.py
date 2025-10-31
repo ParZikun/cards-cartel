@@ -1,4 +1,3 @@
-import sqlite3
 import logging
 from flask import Flask, jsonify, request, abort
 from flask_cors import CORS
@@ -7,10 +6,9 @@ import requests
 from functools import wraps
 from waitress import serve
 from pythonjsonlogger import jsonlogger
+from src.database import main as database
 
 # --- Configuration ---
-DATABASE_PATH = 'data/listings.db'
-DATA_DIR = 'data'
 API_KEY = os.getenv('API_KEY')
 
 # --- Setup Logging ---
@@ -41,50 +39,16 @@ def api_key_required(f):
             abort(401) # Unauthorized
     return decorated_function
 
-def initialize_database():
-    """Ensures the DB file and listings table exist before the first request."""
-    try:
-        if not os.path.exists(DATA_DIR):
-            os.makedirs(DATA_DIR)
-        
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS listings (
-                listing_id TEXT PRIMARY KEY, name TEXT, grade_num REAL, grade TEXT,
-                category TEXT, insured_value REAL, grading_company TEXT, img_url TEXT,
-                grading_id TEXT, token_mint TEXT, price_amount REAL, price_currency TEXT,
-                listed_at TEXT, alt_value REAL, avg_price REAL, supply INTEGER,
-                alt_asset_id TEXT, alt_value_lower_bound REAL, alt_value_upper_bound REAL,
-                alt_value_confidence REAL, cartel_category TEXT NOT NULL DEFAULT 'NEW',
-                is_listed BOOLEAN NOT NULL DEFAULT 1,
-                last_analyzed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.critical(f"Failed to initialize database: {e}", exc_info=True)
-        # In a real production app, you might want to exit here or have a more robust retry.
-
-@app.before_request
-def before_first_request_func():
-    # This runs ONCE before the very first request to this process.
-    initialize_database()
-
 @app.route('/api/listings', methods=['GET'])
 @api_key_required  # Apply the security lock to our endpoint
 def get_listings():
     logger.info(f"Request received for /api/listings from {request.remote_addr}")
     try:
-        conn = sqlite3.connect(DATABASE_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM listings ORDER BY listed_at DESC LIMIT 200")
-        rows = cursor.fetchall()
-        conn.close()
-        
-        listings = [dict(row) for row in rows]
+        with database.get_session() as session:
+            rows = session.query(database.Listing).order_by(database.Listing.listed_at.desc()).limit(200).all()
+            listings = [row.__dict__ for row in rows]
+            for listing in listings:
+                listing.pop('_sa_instance_state', None) # Remove SQLAlchemy internal state
         return jsonify(listings)
 
     except Exception as e:
@@ -125,12 +89,5 @@ def get_wallet_tokens(wallet_address):
         return jsonify({"error": "An internal server error occurred"}), 500
 
 if __name__ == '__main__':
-    # To run with HTTPS, you need a certificate and a private key.
-    # 1. Make sure you have OpenSSL installed.
-    # 2. Generate a self-signed certificate and key:
-    #    openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
-    # 3. Uncomment the line below and update the paths to your cert.pem and key.pem files.
-    # app.run(host="0.0.0.0", port=5000, ssl_context=('/app/cert.pem', '/app/key.pem'))
-
     # The current default is HTTP:
     serve(app, host="0.0.0.0", port=5000)

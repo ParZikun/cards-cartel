@@ -2,16 +2,16 @@ import os
 import discord
 import logging
 import asyncio
-from typing import cast, Callable, Awaitable
+from typing import cast, Callable, Awaitable, Coroutine, Any
 from discord import app_commands, ui, SelectOption
 from discord.ext import commands
 
 # Project imports
-from discord_embeds import create_snipe_embed, create_card_check_embed
-from get_magic_eden_data import check_listing_status_async
-from get_alt_data import get_alt_data_async
-import database
-import utils
+from .core.discord_embeds import create_snipe_embed, create_card_check_embed
+from .core.magic_eden import check_listing_status_async
+from .core.alt_data import get_alt_data_async
+from database import main as database
+from .core import utils
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def _reconstruct_embed_data(deal_data: dict):
         'listed_at': deal_data['listed_at'],
     }
 
-    prices = await utils.get_price_in_both_currencies(deal_data['price_amount'], deal_data['price_currency'])
+    prices = await utils.get_price_in_both_currencies(deal_data['price_amount'], deal_data['price_currency']) # This function is async now
     listing_price_usd = prices['price_usdc'] if prices else 0
     alt_value = deal_data.get('alt_value', 0)
     
@@ -114,7 +114,8 @@ class CartelBot(commands.Bot):
         # This is the proper way to start a background task.
         self.loop.create_task(self.snipe_consumer_loop())
         # Only sync when commands change to avoid rate limits.
-        # await self.tree.sync() 
+        logging.info("Syncing Discord application commands...")
+        await self.tree.sync() 
         logging.info("Discord bot setup hook complete. Consumer loop started.")
 
     async def on_ready(self):
@@ -157,14 +158,14 @@ class CartelBot(commands.Bot):
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable[[], Awaitable[None]]):
+async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str, discord.Interaction], Coroutine[Any, Any, None]]):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
     intents.presences = True       # Required for Presence Intent
     
     bot = CartelBot(snipe_queue=queue, command_prefix="!", intents=intents)
-
+    
     @bot.tree.command(name="cartel_deals", description="Lists active deals from the database.")
     @app_commands.describe(category="Which category of deals to show")
     @app_commands.choices(category=[
@@ -193,10 +194,9 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable
         view = DealSelectorView(deals)
         await interaction.followup.send(f"Found **{len(deals)}** active deals in the **{category.name}** category. Select one to view details.", view=view, ephemeral=True)
 
-    @bot.tree.command(name="check_card", description="Checks the status of a card by its mint address.")
+    @bot.tree.command(name="cartel_inspect", description="Checks the status of a card by its mint address.")
     @app_commands.describe(mint_address="The mint address of the card to check.")
-    async def check_card(interaction: discord.Interaction, mint_address: str):
-        """Handles the /check_card command."""
+    async def cartel_inspect(interaction: discord.Interaction, mint_address: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         card_data = await check_listing_status_async(mint_address)
@@ -228,24 +228,33 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable
         embed = create_card_check_embed(card_data, alt_data)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @bot.tree.command(name="recheck_all", description="Admin: Triggers a full re-analysis of all active listings.")
+    @bot.tree.command(name="cartel_recheck", description="Admin: Re-analyzes listings that were previously skipped.")
     @app_commands.checks.has_role(ROLE_ID)
-    async def recheck_all(interaction: discord.Interaction):
-        """Handles the /recheck_all command."""
+    @app_commands.describe(timeframe="Re-check listings from this period that were marked 'SKIP'")
+    @app_commands.choices(timeframe=[
+        app_commands.Choice(name="Last 1 Hour", value="1H"),
+        app_commands.Choice(name="Last 2 Hours", value="2H"),
+        app_commands.Choice(name="Last 1 Day", value="1D"),
+        app_commands.Choice(name="Last 1 Week", value="1W"),
+        app_commands.Choice(name="Last 1 Month", value="1M"),
+        app_commands.Choice(name="All Skipped", value="ALL"),
+    ])
+    async def cartel_recheck(interaction: discord.Interaction, timeframe: app_commands.Choice[str]):
+        """Handles the /cartel_recheck command."""
         await interaction.response.send_message(
-            "✅ **Acknowledged!** Starting a full re-check of all active listings. "
-            "This may take some time. Any new deals found will be posted.",
-            ephemeral=True
+            f"✅ **Acknowledged!** Starting a re-check of 'SKIP' listings from the **{timeframe.name}**. "
+            "This may take a moment. I will notify you when it is complete.",
+            ephemeral=True,
         )
         # Run the callback in the background
-        await recheck_all_callback()
+        asyncio.create_task(recheck_skipped_callback(timeframe.value, interaction))
 
-    @recheck_all.error
-    async def recheck_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    @cartel_recheck.error
+    async def cartel_recheck_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingRole):
             await interaction.response.send_message("❌ You do not have the required role to use this command.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
+            await interaction.followup.send(f"An unexpected error occurred: {error}", ephemeral=True)
 
     try:
         await bot.start(str(BOT_TOKEN))

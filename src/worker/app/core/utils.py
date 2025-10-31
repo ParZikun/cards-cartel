@@ -29,7 +29,7 @@ async def _fetch_sol_to_usdc_price():
         logger.error(f"Could not fetch SOL price from CoinGecko: {e}")
         return None
 
-async def get_price_in_both_currencies(amount: float, currency: str):
+async def get_price_in_both_currencies(amount: float, currency: str) -> dict | None:
     """
     Takes an amount in one currency (SOL or USDC) and returns a dictionary 
     with the value in both currencies, using a thread-safe, async, cached market rate.

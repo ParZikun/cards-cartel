@@ -1,10 +1,9 @@
-# LOCAL DEVELOPMENT DOCKER-COMPOSE
-# Use this file for local testing.
-# It uses the .env.local file for environment variables.
+# PRODUCTION DOCKER-COMPOSE
+# This file is for the production environment.
+# It uses a .env file for environment variables.
 #
-# To run: make local-up
-# To stop: make local-down
-# To view logs: make local-logs
+# To run: docker-compose -f docker-compose.prod.yml up -d
+# To stop: docker-compose -f docker-compose.prod.yml down
 
 services:
   # --- The Background Worker Service ---
@@ -12,11 +11,11 @@ services:
     build:
       context: .
       dockerfile: src/worker/Dockerfile
-    container_name: sniper-worker-local
+    container_name: sniper-worker-prod
     volumes:
       - ./data:/app/data
     env_file:
-      - ./.env.local  # Use local environment variables
+      - ./.env  # Use production environment variables
     environment:
       - OTEL_EXPORTER_TYPE=JAEGER
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
@@ -26,33 +25,16 @@ services:
       postgres:
         condition: service_healthy
 
-  # --- The API Service ---
-  # api:
-  #   build:
-  #     context: ./src/api
-  #   container_name: sniper-api-local
-  #   ports:
-  #     - "5000:5000"
-  #   volumes:
-  #     - ./data:/app/data
-  #   env_file:
-  #     - ./.env.local # Use local environment variables
-  #   depends_on:
-  #     - postgres
-  #   restart: always
-
   # --- PostgreSQL Service ---
   postgres:
     image: postgres:13
-    container_name: postgres-local
+    container_name: postgres-prod
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_prod:/var/lib/postgresql/data
     env_file:
-      - ./.env.local
-    environment:
-      - POSTGRES_HOST=0.0.0.0
+      - ./.env
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -63,11 +45,11 @@ services:
   # --- Jaeger Tracing Service ---
   jaeger:
     image: cr.jaegertracing.io/jaegertracing/jaeger:latest
-    container_name: jaeger-local
+    container_name: jaeger-prod
     ports:
       - "16686:16686"
       - "4317:4317"
     restart: always
 
 volumes:
-  postgres_data:
+  postgres_data_prod:
