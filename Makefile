@@ -18,13 +18,22 @@ help:
 	@echo "  prod-logs       - View logs for the production environment."
 
 # --- Local Environment Commands ---
+migrate:
+	@echo "Starting postgres and running database migration..."
+	docker-compose -f docker-compose.local.yml up --build -d postgres
+	@echo "Waiting for postgres to be healthy..."
+	@ping -n 10 127.0.0.1 > NUL
+	python -m scripts.migrate_prod_to_postgres
+	@echo "Starting remaining services..."
+	docker-compose -f docker-compose.local.yml up --build -d worker jaeger
+
 local-up:
-	@echo "Starting local environment..."
-	docker-compose -f docker-compose.local.yml up --build -d
+	@echo "Starting local environment with postgres, worker, jaeger and api..."
+	docker-compose -f docker-compose.local.yml up --build -d worker jaeger
 
 local-down:
-	@echo "Stopping local environment..."
-	docker-compose -f docker-compose.local.yml down
+	@echo "Stopping local environment and removing volumes..."
+	docker-compose -f docker-compose.local.yml down --volumes
 
 local-logs:
 	@echo "Showing logs for local environment..."

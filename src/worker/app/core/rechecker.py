@@ -5,8 +5,8 @@ import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from database import core as database
-from .core import magic_eden as me
+from src.database import main as database
+from worker.app.core import magic_eden as me
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ async def recheck_listings():
     """
     logger.info("Starting automated re-checking service for stale listings...")
     
-    active_listings = database.get_all_active_listings()
+    active_listings = await asyncio.to_thread(database.get_all_active_listings)
     now = datetime.utcnow()
     
     for listing in active_listings:
@@ -28,7 +28,7 @@ async def recheck_listings():
             
             if status != 'listed':
                 logger.info(f"Listing {listing['listing_id']} is no longer active. Updating status to unlisted.")
-                database.update_listing_status(listing['token_mint'], is_listed=False)
+                await asyncio.to_thread(database.update_listing_status, listing['token_mint'], is_listed=False)
 
 def start_rechecker():
     """

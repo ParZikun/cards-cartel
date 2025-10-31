@@ -5,13 +5,13 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # 3. Copy only the requirements file first to leverage caching
-COPY requirements.api.txt .
+COPY api/requirements.api.txt .
 
 # 4. Install the Python dependencies
 RUN pip install --no-cache-dir -r requirements.api.txt
 
 # 5. Copy your API code into the container
-COPY . .
+COPY api/ /app
 
 # 6. Specify the command to run when the container starts
 # The '-u' flag is a best practice for Python in Docker. It ensures

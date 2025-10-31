@@ -10,7 +10,7 @@ from discord.ext import commands
 from .core.discord_embeds import create_snipe_embed, create_card_check_embed
 from .core.magic_eden import check_listing_status_async
 from .core.alt_data import get_alt_data_async
-from database import core as database
+from src.database import main as database
 from .core import utils
 
 logger = logging.getLogger(__name__)
