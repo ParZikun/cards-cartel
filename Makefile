@@ -1,24 +1,29 @@
 # Makefile for managing local and production Docker environments
 
-.PHONY: help local-up local-down local-logs local-clean prod-up prod-down prod-logs
+.PHONY: help local-up local-down local-logs local-clean prod-migrate prod-up prod-down prod-logs prod-clean
 
 .DEFAULT_GOAL := help
 
 help:
 	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Targets:"
-	@echo "  local-up        - Start the local environment in detached mode (uses .env.local)."
-	@echo "  local-down      - Stop the local environment."
-	@echo "  local-logs      - View logs for the local environment."
-	@echo "  local-clean     - Stop the local environment and remove all associated volumes (deletes DB data)."
+	@echo "Local Environment Targets:"
+	@echo "  local-migrate    - Build images and run the database migration for local."
+	@echo "  local-up        - Start local services (postgres, worker, jaeger)."
+	@echo "  local-down      - Stop local services."
+	@echo "  local-logs      - View logs for local services."
+	@echo "  local-clean     - Stop local services and remove all associated volumes (deletes DB data)."
 	@echo ""
-	@echo "  prod-up         - Start the production environment in detached mode (uses .env)."
-	@echo "  prod-down       - Stop the production environment."
-	@echo "  prod-logs       - View logs for the production environment."
+	@echo "Production Environment Targets:"
+	@echo "  prod-migrate    - Build images and run the database migration for production."
+	@echo "  prod-up         - Start production services (worker, jaeger)."
+	@echo "  prod-down       - Stop production services."
+	@echo "  prod-logs       - View logs for production services."
+	@echo "  prod-clean      - Stop production services and remove all associated volumes."
+
 
 # --- Local Environment Commands ---
-migrate:
+local-migrate:
 	@echo "Starting postgres and running database migration..."
 	docker-compose -f docker-compose.local.yml up --build -d postgres
 	@echo "Waiting for postgres to be healthy..."
@@ -46,14 +51,25 @@ local-clean:
 	docker-compose -f docker-compose.local.yml down --volumes
 
 # --- Production Environment Commands ---
+prod-migrate:
+	@echo "Building production images..."
+	docker-compose -f docker-compose.prod.yml build worker
+	@echo "Running production database migration..."
+	docker-compose -f docker-compose.prod.yml run --rm worker python scripts/migrate_prod_to_postgres.py
+	@echo "Migration complete."
+
 prod-up:
 	@echo "Starting production environment..."
-	docker-compose -f docker-compose.yml up --build -d
+	docker-compose -f docker-compose.prod.yml up -d
 
 prod-down:
 	@echo "Stopping production environment..."
-	docker-compose -f docker-compose.yml down
+	docker-compose -f docker-compose.prod.yml down
 
 prod-logs:
 	@echo "Showing logs for production environment..."
-	docker-compose -f docker-compose.yml logs -f
+	docker-compose -f docker-compose.prod.yml logs -f
+
+prod-clean:
+	@echo "Stopping production environment and removing volumes..."
+	docker-compose -f docker-compose.prod.yml down --volumes
