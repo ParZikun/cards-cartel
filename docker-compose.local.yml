@@ -22,6 +22,9 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
       - POSTGRES_HOST=postgres # Use the service name for the hostname
     restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # --- The API Service ---
   # api:
@@ -51,6 +54,11 @@ services:
     environment:
       - POSTGRES_HOST=0.0.0.0
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # --- Jaeger Tracing Service ---
   jaeger:

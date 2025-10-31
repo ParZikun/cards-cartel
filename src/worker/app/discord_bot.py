@@ -157,14 +157,14 @@ class CartelBot(commands.Bot):
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable[[], Awaitable[None]]):
+async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str], Awaitable[None]]):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
     intents.presences = True       # Required for Presence Intent
     
     bot = CartelBot(snipe_queue=queue, command_prefix="!", intents=intents)
-
+    
     @bot.tree.command(name="cartel_deals", description="Lists active deals from the database.")
     @app_commands.describe(category="Which category of deals to show")
     @app_commands.choices(category=[
@@ -228,20 +228,28 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable
         embed = create_card_check_embed(card_data, alt_data)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @bot.tree.command(name="recheck_all", description="Admin: Triggers a full re-analysis of all active listings.")
+    @bot.tree.command(name="cartel_recheck", description="Admin: Re-analyzes listings that were previously skipped.")
     @app_commands.checks.has_role(ROLE_ID)
-    async def recheck_all(interaction: discord.Interaction):
-        """Handles the /recheck_all command."""
+    @app_commands.describe(timeframe="Re-check listings from this period that were marked 'SKIP'")
+    @app_commands.choices(timeframe=[
+        app_commands.Choice(name="Last Hour", value="1H"),
+        app_commands.Choice(name="Last 6 Hours", value="6H"),
+        app_commands.Choice(name="Last Day", value="1D"),
+        app_commands.Choice(name="Last 7 Days", value="7D"),
+        app_commands.Choice(name="All Time", value="ALL")
+    ])
+    async def cartel_recheck(interaction: discord.Interaction, timeframe: app_commands.Choice[str]):
+        """Handles the /cartel_recheck command."""
         await interaction.response.send_message(
-            "✅ **Acknowledged!** Starting a full re-check of all active listings. "
-            "This may take some time. Any new deals found will be posted.",
-            ephemeral=True
+            f"✅ **Acknowledged!** Starting a re-check of 'SKIP' listings from the **{timeframe.name}**. "
+            "This may take a moment. Any new deals found will be posted.",
+            ephemeral=True,
         )
         # Run the callback in the background
-        await recheck_all_callback()
+        await recheck_skipped_callback(timeframe.value)
 
-    @recheck_all.error
-    async def recheck_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    @cartel_recheck.error
+    async def cartel_recheck_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingRole):
             await interaction.response.send_message("❌ You do not have the required role to use this command.", ephemeral=True)
         else:

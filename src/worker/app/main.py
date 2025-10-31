@@ -206,29 +206,45 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
         current_span.record_exception(e)
         current_span.set_status(trace.Status(trace.StatusCode.ERROR))
 
-@tracer.start_as_current_span("recheck_all_listings")
-async def recheck_all_listings(queue: asyncio.Queue):
+@tracer.start_as_current_span("cartel_recheck")
+async def cartel_recheck(queue: asyncio.Queue, timeframe: str):
     """
-    Fetches all active listings from the database and re-processes them.
+    Fetches active listings marked as 'SKIP' within a given timeframe and re-processes them.
     """
-    logger.info("--- Starting a full re-check of all active listings ---")
+    logger.info(f"--- Starting a re-check of 'SKIP' listings for timeframe: {timeframe} ---")
     current_span = trace.get_current_span()
+    current_span.set_attribute("recheck.timeframe", timeframe)
     
-    active_listings = await asyncio.to_thread(database.get_all_active_listings)
-    if not active_listings:
-        logger.warning("Re-check initiated, but no active listings found.")
+    time_deltas = {
+        "1H": timedelta(hours=1),
+        "2H": timedelta(hours=2),
+        "6H": timedelta(hours=6),
+        "1D": timedelta(days=1),
+        "1W": timedelta(weeks=1),
+        "1M": timedelta(days=30), # Approximating 1 month as 30 days
+    }
+
+    since_timestamp = None
+    if timeframe in time_deltas:
+        since_timestamp = datetime.now(timezone.utc) - time_deltas[timeframe]
+
+    # The database function will handle the case where since_timestamp is None (for 'ALL')
+    skipped_listings = await asyncio.to_thread(database.get_skipped_listings, since_timestamp)
+
+    if not skipped_listings:
+        logger.warning(f"Re-check initiated for {timeframe}, but no 'SKIP' listings found in that period.")
         return
-
-    logger.info(f"Found {len(active_listings)} active listings to re-process.")
-    current_span.set_attribute("listings_to_reprocess", len(active_listings))
-
-    for i, listing in enumerate(active_listings):
-        logger.info(f"--- Re-processing listing {i+1}/{len(active_listings)} ---")
+    
+    logger.info(f"Found {len(skipped_listings)} 'SKIP' listings to re-process.")
+    current_span.set_attribute("listings_to_reprocess", len(skipped_listings))
+    
+    for i, listing in enumerate(skipped_listings):
+        logger.info(f"--- Re-processing listing {i+1}/{len(skipped_listings)} ---")
         # We set send_alert=True to ensure any new snipes are sent to Discord
         await process_listing(listing, queue, send_alert=True)
-        await asyncio.sleep(1) # Be respectful to external APIs
+        await asyncio.sleep(0.55) # Be respectful to external APIs
 
-    logger.info("--- Full re-check of all active listings complete! ---")
+    logger.info(f"--- Re-check for timeframe '{timeframe}' complete! ---")
 
 @tracer.start_as_current_span("initial_population")
 async def initial_population(queue: asyncio.Queue):
@@ -306,7 +322,7 @@ async def main():
     if not await asyncio.to_thread(database.get_all_listing_ids):
         await initial_population(snipe_queue)
 
-    discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue, lambda: recheck_all_listings(snipe_queue)))
+    discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue, recheck_skipped_callback=lambda timeframe: cartel_recheck(snipe_queue, timeframe)))
     watchdog_task = asyncio.create_task(watchdog(snipe_queue))
     reaper_task = asyncio.create_task(reaper(verification_queue, snipe_queue))
     

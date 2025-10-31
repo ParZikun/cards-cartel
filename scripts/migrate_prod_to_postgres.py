@@ -2,15 +2,23 @@
 import sqlite3
 from datetime import datetime, timedelta
 import logging
+import os
+import sys
 from sqlalchemy.orm import sessionmaker
-from database.engine import engine, Listing, Base
+from dotenv import load_dotenv
+
+# Add the project's root directory to the Python path to find the 'src' module
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env.local'))
+
+from src.database.main import engine, Listing, Base
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-PROD_DB_FILE = "./data/prod-listings.db"
+PROD_DB_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'prod-listings.db')
 
 def fetch_prod_listings():
     """Fetches all listings from the production SQLite database."""
@@ -47,7 +55,7 @@ def migrate_data():
     try:
         logger.info(f"Starting bulk insert of {len(listings_to_insert)} listings...")
         # SQLAlchemy's bulk_insert_mappings is efficient for large inserts
-        session.bulk_insert_mappings(Listing, listings_to_insert)
+        session.bulk_insert_mappings(Listing, listings_to_insert)  # type: ignore
         session.commit()
         logger.info("Bulk insert completed successfully.")
     except Exception as e:

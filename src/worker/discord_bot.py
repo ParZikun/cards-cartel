@@ -157,7 +157,7 @@ class CartelBot(commands.Bot):
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable[[], Awaitable[None]]):
+async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str], Awaitable[None]]):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
@@ -228,17 +228,26 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_all_callback: Callable
         embed = create_card_check_embed(card_data, alt_data)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @bot.tree.command(name="recheck_all", description="Admin: Triggers a full re-analysis of all active listings.")
+    @bot.tree.command(name="cartel_recheck", description="Admin: Triggers a re-analysis of 'SKIP' listings within a specified timeframe.")
+    @app_commands.describe(timeframe="The period to re-check 'SKIP' listings for.")
+    @app_commands.choices(timeframe=[
+        app_commands.Choice(name="Last 1 Hour", value="1H"),
+        app_commands.Choice(name="Last 2 Hours", value="2H"),
+        app_commands.Choice(name="Last 1 Day", value="1D"),
+        app_commands.Choice(name="Last 1 Week", value="1W"),
+        app_commands.Choice(name="Last 1 Month", value="1M"),
+        app_commands.Choice(name="All Skipped", value="ALL"),
+    ])
     @app_commands.checks.has_role(ROLE_ID)
-    async def recheck_all(interaction: discord.Interaction):
-        """Handles the /recheck_all command."""
+    async def cartel_recheck(interaction: discord.Interaction, timeframe: app_commands.Choice[str]):
+        """Handles the /cartel_recheck command."""
         await interaction.response.send_message(
-            "✅ **Acknowledged!** Starting a full re-check of all active listings. "
+            f"✅ **Acknowledged!** Starting a re-check of 'SKIP' listings for the **{timeframe.name}** period. "
             "This may take some time. Any new deals found will be posted.",
             ephemeral=True
         )
         # Run the callback in the background
-        await recheck_all_callback()
+        await recheck_all_callback(timeframe.value)
 
     @recheck_all.error
     async def recheck_all_error(interaction: discord.Interaction, error: app_commands.AppCommandError):

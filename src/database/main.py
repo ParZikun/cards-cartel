@@ -157,3 +157,24 @@ def get_listing_by_mint(mint_address: str) -> dict | None:
     with get_session() as session:
         row = session.query(Listing).filter(Listing.token_mint == mint_address).first()
         return row.__dict__ if row else None
+
+def get_skipped_listings(since: datetime | None) -> list[dict]:
+    """
+    Fetches all active listings with 'SKIP' category, optionally filtered by a timestamp.
+
+    Args:
+        since (datetime | None): If provided, only returns listings analyzed after this timestamp.
+                                 The timestamp should be timezone-aware (UTC).
+
+    Returns:
+        list[dict]: A list of listing dictionaries.
+    """
+    with get_session() as session:
+        query = session.query(Listing).filter(
+            Listing.is_listed == True,
+            Listing.cartel_category == 'SKIP'
+        )
+        if since:
+            query = query.filter(Listing.last_analyzed_at >= since)
+        rows = query.all()
+        return [row.__dict__ for row in rows]

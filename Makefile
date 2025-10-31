@@ -22,7 +22,9 @@ migrate:
 	@echo "Starting postgres and running database migration..."
 	docker-compose -f docker-compose.local.yml up --build -d postgres
 	@echo "Waiting for postgres to be healthy..."
-	@ping -n 10 127.0.0.1 > NUL
+	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' postgres-local)" = "healthy" ]; do \
+		sleep 1; \
+	done;
 	python -m scripts.migrate_prod_to_postgres
 	@echo "Starting remaining services..."
 	docker-compose -f docker-compose.local.yml up --build -d worker jaeger
@@ -32,8 +34,8 @@ local-up:
 	docker-compose -f docker-compose.local.yml up --build -d postgres worker jaeger
 
 local-down:
-	@echo "Stopping local environment and removing volumes..."
-	docker-compose -f docker-compose.local.yml down --volumes
+	@echo "Stopping local environment..."
+	docker-compose -f docker-compose.local.yml down
 
 local-logs:
 	@echo "Showing logs for local environment..."
