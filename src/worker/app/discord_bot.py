@@ -2,7 +2,7 @@ import os
 import discord
 import logging
 import asyncio
-from typing import cast, Callable, Awaitable
+from typing import cast, Callable, Awaitable, Coroutine, Any
 from discord import app_commands, ui, SelectOption
 from discord.ext import commands
 
@@ -158,7 +158,7 @@ class CartelBot(commands.Bot):
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str, discord.Interaction], Awaitable[None]]):
+async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str, discord.Interaction], Coroutine[Any, Any, None]]):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
@@ -196,8 +196,7 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Call
 
     @bot.tree.command(name="cartel_inspect", description="Checks the status of a card by its mint address.")
     @app_commands.describe(mint_address="The mint address of the card to check.")
-    async def check_card(interaction: discord.Interaction, mint_address: str):
-        """Handles the /check_card command."""
+    async def cartel_inspect(interaction: discord.Interaction, mint_address: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         card_data = await check_listing_status_async(mint_address)
@@ -240,7 +239,6 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Call
         app_commands.Choice(name="Last 1 Month", value="1M"),
         app_commands.Choice(name="All Skipped", value="ALL"),
     ])
-    @app_commands.checks.has_role(ROLE_ID)
     async def cartel_recheck(interaction: discord.Interaction, timeframe: app_commands.Choice[str]):
         """Handles the /cartel_recheck command."""
         await interaction.response.send_message(
@@ -249,14 +247,14 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Call
             ephemeral=True,
         )
         # Run the callback in the background
-        await recheck_skipped_callback(timeframe.value, interaction)
+        asyncio.create_task(recheck_skipped_callback(timeframe.value, interaction))
 
     @cartel_recheck.error
     async def cartel_recheck_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingRole):
             await interaction.response.send_message("❌ You do not have the required role to use this command.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
+            await interaction.followup.send(f"An unexpected error occurred: {error}", ephemeral=True)
 
     try:
         await bot.start(str(BOT_TOKEN))

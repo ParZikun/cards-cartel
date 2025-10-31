@@ -23,6 +23,7 @@ from worker.app.core import tracing
 from worker.app.core import magic_eden as me
 from worker.app.core import alt_data as alt
 from worker.app.core import utils as utils
+import discord
 from worker.app import discord_bot as discord_bot
 from datetime import datetime, timezone, timedelta
 
@@ -207,10 +208,9 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
         return False
 
 @tracer.start_as_current_span("cartel_recheck")
-async def cartel_recheck(queue: asyncio.Queue, timeframe: str) -> tuple[int, int]:
+async def cartel_recheck(queue: asyncio.Queue, timeframe: str, interaction: discord.Interaction):
     """
     Fetches active listings marked as 'SKIP' within a given timeframe and re-processes them.
-    Returns a tuple of (processed_count, new_deals_count).
     """
     logger.info(f"--- Starting a re-check of 'SKIP' listings for timeframe: {timeframe} ---")
     current_span = trace.get_current_span()
@@ -234,8 +234,9 @@ async def cartel_recheck(queue: asyncio.Queue, timeframe: str) -> tuple[int, int
 
     if not skipped_listings:
         logger.warning(f"Re-check initiated for {timeframe}, but no 'SKIP' listings found in that period.")
-        return 0, 0
-    
+        await interaction.followup.send(f"ℹ️ No 'SKIP' listings found to re-check for the **{timeframe}** timeframe.", ephemeral=True)
+        return
+
     logger.info(f"Found {len(skipped_listings)} 'SKIP' listings to re-process.")
     current_span.set_attribute("listings_to_reprocess", len(skipped_listings))
     
@@ -247,8 +248,14 @@ async def cartel_recheck(queue: asyncio.Queue, timeframe: str) -> tuple[int, int
             new_deals_count += 1
         await asyncio.sleep(0.55) # Be respectful to external APIs
 
+    processed_count = len(skipped_listings)
     logger.info(f"--- Re-check for timeframe '{timeframe}' complete! ---")
-    return len(skipped_listings), new_deals_count
+    await interaction.followup.send(
+        f"✅ **Re-check Complete!**\n"
+        f"Processed **{processed_count}** listings from the **{timeframe}** timeframe.\n"
+        f"Found **{new_deals_count}** new deals.",
+        ephemeral=True
+    )
 
 @tracer.start_as_current_span("initial_population")
 async def initial_population(queue: asyncio.Queue):
@@ -326,7 +333,7 @@ async def main():
     if not await asyncio.to_thread(database.get_all_listing_ids):
         await initial_population(snipe_queue)
 
-    discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue, recheck_skipped_callback=lambda timeframe: cartel_recheck(snipe_queue, timeframe)))
+    discord_task = asyncio.create_task(discord_bot.start_discord_bot(snipe_queue, recheck_skipped_callback=lambda timeframe, interaction: cartel_recheck(snipe_queue, timeframe, interaction)))
     watchdog_task = asyncio.create_task(watchdog(snipe_queue))
     reaper_task = asyncio.create_task(reaper(verification_queue, snipe_queue))
     
