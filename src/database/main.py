@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime
 from sqlalchemy import create_engine, Column, String, Float, Integer, Boolean, DateTime, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.dialects.postgresql import insert

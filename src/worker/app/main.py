@@ -111,16 +111,15 @@ async def reaper(verification_queue: asyncio.Queue, snipe_queue: asyncio.Queue):
                 verification_queue.task_done()
 
 @tracer.start_as_current_span("process_listing")
-async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool = True):
+async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool = True) -> bool:
     """
     The complete, atomic pipeline for a single listing.
+    Returns True if a new deal was found, False otherwise.
     """
     start_time = time.time()
     logger.info(f"Processing: {listing.get('name')} ({listing.get('grading_id')})")
     
     current_span = trace.get_current_span()
-    # Add key details to the span to make it searchable
-    # Ensure we never pass None to set_attribute by coercing to safe types/defaults
     listing_id_attr = str(listing.get('listing_id')) if listing.get('listing_id') is not None else "unknown"
     listing_name_attr = listing.get('name') or "unknown"
     listing_grade_id_attr = str(listing.get('grading_id')) if listing.get('grading_id') is not None else "unknown"
@@ -139,17 +138,16 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
             logger.warning(f"Could not fetch ALT data for {listing.get('name')}. Marking as SKIP.")
             await asyncio.to_thread(database.skip_listing, listing['listing_id'], 'SKIP')
             current_span.set_attribute("listing.status", "SKIPPED_NO_ALT_DATA")
-            return
+            return False
 
         prices = await utils.get_price_in_both_currencies(listing['price_amount'], listing['price_currency'])
         if not prices:
             logger.error(f"Could not convert price for {listing.get('name')}. Skipping.")
             current_span.set_attribute("listing.status", "SKIPPED_NO_PRICE_DATA")
-            return
+            return False
 
         snipe_details = {**processed_alt_data, 'listing_price_usd': prices['price_usdc']}
         
-        # Create a dedicated span for the business logic to time it separately
         with tracer.start_as_current_span("business_logic") as business_span:
             alert_level = None
             alt_value = snipe_details.get('alt_value', 0)
@@ -172,16 +170,15 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
                         alert_level = 'INFO'
                         cartel_category = 'OK'
             
-            # Add results to the business logic span
             business_span.set_attribute("alert_level", str(alert_level))
             business_span.set_attribute("cartel_category", cartel_category)
 
         current_span.set_attribute("alert_level", str(alert_level))
         current_span.set_attribute("cartel_category", cartel_category)
 
-        # Calculate duration before sending to Discord queue
         duration = time.time() - start_time
-                
+        
+        found_deal = False
         if alert_level and send_alert:
             await queue.put({
                 'listing_data': listing, 
@@ -189,6 +186,7 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
                 'alert_level': alert_level,
                 'duration': duration
             })
+            found_deal = True
        
         await asyncio.to_thread(database.update_listing, listing['listing_id'], snipe_details, cartel_category)
         
@@ -200,16 +198,19 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
 
         logger.info(f"Successfully processed {listing.get('name')}. Took {duration:.3f}s. Alert: {alert_level}")
         current_span.set_attribute("processing_duration_ms", duration * 1000)
+        return found_deal
 
     except Exception as e:
         logger.error(f"Unexpected error while processing {listing.get('name')}: {e}", exc_info=True)
         current_span.record_exception(e)
         current_span.set_status(trace.Status(trace.StatusCode.ERROR))
+        return False
 
 @tracer.start_as_current_span("cartel_recheck")
-async def cartel_recheck(queue: asyncio.Queue, timeframe: str):
+async def cartel_recheck(queue: asyncio.Queue, timeframe: str) -> tuple[int, int]:
     """
     Fetches active listings marked as 'SKIP' within a given timeframe and re-processes them.
+    Returns a tuple of (processed_count, new_deals_count).
     """
     logger.info(f"--- Starting a re-check of 'SKIP' listings for timeframe: {timeframe} ---")
     current_span = trace.get_current_span()
@@ -233,18 +234,21 @@ async def cartel_recheck(queue: asyncio.Queue, timeframe: str):
 
     if not skipped_listings:
         logger.warning(f"Re-check initiated for {timeframe}, but no 'SKIP' listings found in that period.")
-        return
+        return 0, 0
     
     logger.info(f"Found {len(skipped_listings)} 'SKIP' listings to re-process.")
     current_span.set_attribute("listings_to_reprocess", len(skipped_listings))
     
+    new_deals_count = 0
     for i, listing in enumerate(skipped_listings):
         logger.info(f"--- Re-processing listing {i+1}/{len(skipped_listings)} ---")
         # We set send_alert=True to ensure any new snipes are sent to Discord
-        await process_listing(listing, queue, send_alert=True)
+        if await process_listing(listing, queue, send_alert=True):
+            new_deals_count += 1
         await asyncio.sleep(0.55) # Be respectful to external APIs
 
     logger.info(f"--- Re-check for timeframe '{timeframe}' complete! ---")
+    return len(skipped_listings), new_deals_count
 
 @tracer.start_as_current_span("initial_population")
 async def initial_population(queue: asyncio.Queue):

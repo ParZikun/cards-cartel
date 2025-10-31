@@ -114,7 +114,8 @@ class CartelBot(commands.Bot):
         # This is the proper way to start a background task.
         self.loop.create_task(self.snipe_consumer_loop())
         # Only sync when commands change to avoid rate limits.
-        # await self.tree.sync() 
+        logging.info("Syncing Discord application commands...")
+        await self.tree.sync() 
         logging.info("Discord bot setup hook complete. Consumer loop started.")
 
     async def on_ready(self):
@@ -157,7 +158,7 @@ class CartelBot(commands.Bot):
 
 # --- Main entry point for the bot ---
 
-async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str], Awaitable[None]]):
+async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Callable[[str, discord.Interaction], Awaitable[None]]):
     intents = discord.Intents.default()
     intents.message_content = True # If you plan commands or need message content
     intents.members = True         # Required for Server Members Intent
@@ -193,7 +194,7 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Call
         view = DealSelectorView(deals)
         await interaction.followup.send(f"Found **{len(deals)}** active deals in the **{category.name}** category. Select one to view details.", view=view, ephemeral=True)
 
-    @bot.tree.command(name="check_card", description="Checks the status of a card by its mint address.")
+    @bot.tree.command(name="cartel_inspect", description="Checks the status of a card by its mint address.")
     @app_commands.describe(mint_address="The mint address of the card to check.")
     async def check_card(interaction: discord.Interaction, mint_address: str):
         """Handles the /check_card command."""
@@ -232,21 +233,23 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Call
     @app_commands.checks.has_role(ROLE_ID)
     @app_commands.describe(timeframe="Re-check listings from this period that were marked 'SKIP'")
     @app_commands.choices(timeframe=[
-        app_commands.Choice(name="Last Hour", value="1H"),
-        app_commands.Choice(name="Last 6 Hours", value="6H"),
-        app_commands.Choice(name="Last Day", value="1D"),
-        app_commands.Choice(name="Last 7 Days", value="7D"),
-        app_commands.Choice(name="All Time", value="ALL")
+        app_commands.Choice(name="Last 1 Hour", value="1H"),
+        app_commands.Choice(name="Last 2 Hours", value="2H"),
+        app_commands.Choice(name="Last 1 Day", value="1D"),
+        app_commands.Choice(name="Last 1 Week", value="1W"),
+        app_commands.Choice(name="Last 1 Month", value="1M"),
+        app_commands.Choice(name="All Skipped", value="ALL"),
     ])
+    @app_commands.checks.has_role(ROLE_ID)
     async def cartel_recheck(interaction: discord.Interaction, timeframe: app_commands.Choice[str]):
         """Handles the /cartel_recheck command."""
         await interaction.response.send_message(
             f"✅ **Acknowledged!** Starting a re-check of 'SKIP' listings from the **{timeframe.name}**. "
-            "This may take a moment. Any new deals found will be posted.",
+            "This may take a moment. I will notify you when it is complete.",
             ephemeral=True,
         )
         # Run the callback in the background
-        await recheck_skipped_callback(timeframe.value)
+        await recheck_skipped_callback(timeframe.value, interaction)
 
     @cartel_recheck.error
     async def cartel_recheck_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
