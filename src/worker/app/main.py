@@ -13,7 +13,7 @@ else:
 
 import time
 import asyncio
-from src.database import main as database
+from database import main as database
 
 # --- Tracing Imports ---
 from opentelemetry import trace

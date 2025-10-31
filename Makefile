@@ -29,7 +29,7 @@ migrate:
 
 local-up:
 	@echo "Starting local environment with postgres, worker, jaeger and api..."
-	docker-compose -f docker-compose.local.yml up --build -d worker jaeger
+	docker-compose -f docker-compose.local.yml up --build -d postgres worker jaeger
 
 local-down:
 	@echo "Stopping local environment and removing volumes..."

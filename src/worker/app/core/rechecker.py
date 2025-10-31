@@ -5,7 +5,7 @@ import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from src.database import main as database
+from database import main as database
 from worker.app.core import magic_eden as me
 
 logger = logging.getLogger(__name__)
