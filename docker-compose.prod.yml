@@ -1,9 +1,6 @@
 # PRODUCTION DOCKER-COMPOSE
 # This file is for the production environment.
-# It uses a .env file for environment variables.
-#
-# To run: docker-compose -f docker-compose.prod.yml up -d
-# To stop: docker-compose -f docker-compose.prod.yml down
+# It connects to the managed Azure PostgreSQL database.
 
 services:
   # --- The Background Worker Service ---
@@ -13,34 +10,15 @@ services:
       dockerfile: src/worker/Dockerfile
     container_name: sniper-worker-prod
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data  # Links our SQLite DB for the migration
     env_file:
-      - ./.env  # Use production environment variables
+      - ./.env  # Use production environment variables from .env
     environment:
       - OTEL_EXPORTER_TYPE=JAEGER
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
-      - POSTGRES_HOST=postgres # Use the service name for the hostname
+      # POSTGRES_HOST is now read from the .env file
     restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # --- PostgreSQL Service ---
-  postgres:
-    image: postgres:13
-    container_name: postgres-prod
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data_prod:/var/lib/postgresql/data
-    env_file:
-      - ./.env
-    restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    # 'depends_on' is removed
 
   # --- Jaeger Tracing Service ---
   jaeger:
@@ -51,5 +29,5 @@ services:
       - "4317:4317"
     restart: always
 
-volumes:
-  postgres_data_prod:
+# 'postgres_data_prod' volume is no longer needed
+volumes: {}
