@@ -25,11 +25,11 @@ HEADERS = {
 }
 
 # Create a single, reusable async client
-async_client = httpx.AsyncClient(headers=HEADERS, timeout=5)
+async_client = httpx.AsyncClient(headers=HEADERS, timeout=20)
 
 CERT_ID_TO_ASSET_ID_CACHE = {}
 
-async def get_asset_id_async(cert_id: str, retries: int = 3, delay: int = 2):
+async def get_asset_id_async(cert_id: str, retries: int = 5, initial_delay: float = 1.0):
     """
     Looks up an asset's internal ID using its certification number, asynchronously.
     """
@@ -38,11 +38,16 @@ async def get_asset_id_async(cert_id: str, retries: int = 3, delay: int = 2):
         "variables": {"certNumber": cert_id},
         "query": "query Cert($certNumber: String!) { cert(certNumber: $certNumber) { asset { id name __typename } __typename } }"
     }
+    delay = initial_delay
     for attempt in range(retries):
         try:
             response = await async_client.post(url=GRAPHQL_URL, json=payload)
             response.raise_for_status()
             data = response.json()
+
+            if not data:
+                logger.warning(f"Received empty JSON response for cert '{cert_id}'. Assuming not found.")
+                return None
             
             asset = data.get('data', {}).get('cert', {}).get('asset')
             if asset and 'id' in asset:
@@ -52,14 +57,23 @@ async def get_asset_id_async(cert_id: str, retries: int = 3, delay: int = 2):
                 return None
                 
         except httpx.RequestError as e:
-            logger.warning(f"ALT API call (get_asset_id_async) failed for cert '{cert_id}' on attempt {attempt + 1}: {e}")
+            if isinstance(e, httpx.HTTPStatusError):
+                logger.warning(
+                    f"ALT API call (get_asset_id_async) failed for cert '{cert_id}' on attempt {attempt + 1} "
+                    f"with status {e.response.status_code}: {e.response.text}"
+                )
+            else:
+                logger.warning(
+                    f"ALT API call (get_asset_id_async) failed for cert '{cert_id}' on attempt {attempt + 1}: {repr(e)}"
+                )
             if attempt < retries - 1:
                 await asyncio.sleep(delay)
-
-    logger.error(f"Failed to get asset_id for cert '{cert_id}' after {retries} attempts.")
+                delay *= 2
+            else:
+                logger.error(f"Failed to get asset_id for cert '{cert_id}' after {retries} attempts.")
     return None
 
-async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: int = 3, delay: int = 3):
+async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: int = 5, initial_delay: float = 1.0):
     """
     Main async orchestrator. Returns a dict with: alt_value, avg_price, supply, and confidence data.
     """
@@ -129,6 +143,7 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
         "query": transactions_query
     }
     
+    delay = initial_delay
     for attempt in range(retries):
         try:
             # Run both GraphQL queries concurrently
@@ -139,8 +154,15 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
             details_response.raise_for_status()
             trans_response.raise_for_status()
 
-            details_data = details_response.json().get('data', {}).get('asset', {}) or {}
-            transactions = trans_response.json().get('data', {}).get('asset', {}).get('marketTransactions', [])
+            details_json = details_response.json()
+            trans_json = trans_response.json()
+
+            if not details_json or not trans_json:
+                logger.warning(f"Received empty JSON response for asset '{asset_id}'.")
+                return None
+
+            details_data = details_json.get('data', {}).get('asset', {}) or {}
+            transactions = trans_json.get('data', {}).get('asset', {}).get('marketTransactions', [])
 
             alt_value_info = details_data.get('altValueInfo', {}) or {}
             confidence_data = alt_value_info.get('confidenceData', {}) or {}
@@ -178,9 +200,17 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
                 "confidence": confidence_data.get('currentConfidenceMetric') or 0.0
             }
         except httpx.RequestError as e:
-            logger.warning(f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1}: {e}")
+            if isinstance(e, httpx.HTTPStatusError):
+                logger.warning(
+                    f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1} with status {e.response.status_code}: {e.response.text}"
+                )
+            else:
+                logger.warning(f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1}: {e}")
             if attempt < retries - 1:
                 await asyncio.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(f"Failed to get ALT data for asset {asset_id} after {retries} attempts.")
     return None # Explicitly return None if all retries fail
 
 # --- SANITY TEST --- 

@@ -14,9 +14,11 @@ COPY src/worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 6. Copy the contents of the src directory into the container's /app directory
-COPY src/api /app/api
 COPY src/database /app/database
 COPY src/worker /app/worker
 
-# 7. Specify the command to run when the container starts
+# 7. Remove __pycache__ directories to prevent using stale bytecode
+RUN find . -type d -name "__pycache__" -exec rm -r {} +
+
+# 8. Specify the command to run when the container starts
 CMD ["python3", "-m", "worker.app.main"]

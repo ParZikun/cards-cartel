@@ -1,6 +1,6 @@
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,23 +12,40 @@ logger = logging.getLogger(__name__)
 
 async def recheck_listings():
     """
-    Re-checks active listings older than 24 hours to verify their status.
+    Re-checks active listings to verify their status if they haven't been checked in the last 24 hours.
     """
     logger.info("Starting automated re-checking service for stale listings...")
     
     active_listings = await asyncio.to_thread(database.get_all_active_listings)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     for listing in active_listings:
-        listed_at = datetime.fromisoformat(listing['listed_at'].replace('Z', '+00:00'))
+        last_analyzed_str = listing.get('last_analyzed_at')
         
-        if now - listed_at > timedelta(hours=24):
-            logger.info(f"Re-checking listing: {listing['listing_id']}")
+        if not last_analyzed_str:
+            logger.debug(f"Skipping listing {listing.get('listing_id')} because last_analyzed_at is missing.")
+            continue
+
+        try:
+            # Assuming the timestamp from the DB is a string like 'YYYY-MM-DD HH:MM:SS' and is in UTC
+            last_analyzed_at = datetime.strptime(last_analyzed_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            logger.warning(f"Could not parse last_analyzed_at: '{last_analyzed_str}' for listing {listing.get('listing_id')}. Skipping.")
+            continue
+            
+        age = now - last_analyzed_at
+        logger.info(f"Listing {listing.get('listing_id')} was last analyzed {age} ago.")
+
+        if age > timedelta(hours=24):
+            logger.info(f"Re-checking listing: {listing['listing_id']} (last checked {age} ago).")
             status = await me.check_listing_status_async(listing['token_mint'])
             
-            if status != 'listed':
+            if status == 'not_found':
                 logger.info(f"Listing {listing['listing_id']} is no longer active. Updating status to unlisted.")
                 await asyncio.to_thread(database.update_listing_status, listing['token_mint'], is_listed=False)
+        else:
+            logger.info(f"Skipping re-check for listing {listing['listing_id']} as it was checked within 24 hours.")
+
 
 def start_rechecker():
     """

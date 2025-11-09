@@ -11,23 +11,12 @@ services:
     container_name: sniper-worker-prod
     volumes:
       - ./data:/app/data  # Links our SQLite DB for the migration
+      - ./scripts:/app/scripts
+      - ./src:/app/src
     env_file:
       - ./.env  # Use production environment variables from .env
-    environment:
-      - OTEL_EXPORTER_TYPE=JAEGER
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
-      # POSTGRES_HOST is now read from the .env file
     restart: always
     # 'depends_on' is removed
-
-  # --- Jaeger Tracing Service ---
-  jaeger:
-    image: cr.jaegertracing.io/jaegertracing/jaeger:latest
-    container_name: jaeger-prod
-    ports:
-      - "16686:16686"
-      - "4317:4317"
-    restart: always
 
 # 'postgres_data_prod' volume is no longer needed
 volumes: {}

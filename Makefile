@@ -9,17 +9,18 @@ help:
 	@echo ""
 	@echo "Local Environment Targets:"
 	@echo "  local-migrate    - Build images and run the database migration for local."
-	@echo "  local-up        - Start local services (postgres, worker, jaeger)."
+	@echo "  local-up        - Start local services (postgres, worker)."
 	@echo "  local-down      - Stop local services."
 	@echo "  local-logs      - View logs for local services."
 	@echo "  local-clean     - Stop local services and remove all associated volumes (deletes DB data)."
 	@echo ""
 	@echo "Production Environment Targets:"
 	@echo "  prod-migrate    - Build images and run the database migration for production."
-	@echo "  prod-up         - Start production services (worker, jaeger)."
+	@echo "  prod-up         - Start production services (worker)."
 	@echo "  prod-down       - Stop production services."
 	@echo "  prod-logs       - View logs for production services."
 	@echo "  prod-clean      - Stop production services and remove all associated volumes."
+	@echo "  prod-analyze    - Analyze ALL ME and DB listings and update database."
 
 
 # --- Local Environment Commands ---
@@ -32,11 +33,11 @@ local-migrate:
 	done;
 	python -m scripts.migrate_prod_to_postgres
 	@echo "Starting remaining services..."
-	docker-compose -f docker-compose.local.yml up --build -d worker jaeger
+	docker-compose -f docker-compose.local.yml up --build -d worker
 
 local-up:
-	@echo "Starting local environment with postgres, worker, jaeger and api..."
-	docker-compose -f docker-compose.local.yml up --build -d postgres worker jaeger
+	@echo "Starting local environment with postgres and worker..."
+	docker-compose -f docker-compose.local.yml up --build -d postgres worker
 
 local-down:
 	@echo "Stopping local environment..."
@@ -49,6 +50,11 @@ local-logs:
 local-clean:
 	@echo "Stopping local environment and removing volumes..."
 	docker-compose -f docker-compose.local.yml down --volumes
+
+local-analyze:
+	@echo "Running analysis of all ME and DB listings to update database..."
+	docker-compose -f docker-compose.local.yml run --rm worker python -m scripts.update_database_listings
+	@echo "Analysis complete."
 
 # --- Production Environment Commands ---
 prod-migrate:
@@ -73,3 +79,8 @@ prod-logs:
 prod-clean:
 	@echo "Stopping production environment and removing volumes..."
 	docker-compose -f docker-compose.prod.yml down --volumes
+
+prod-analyze:
+	@echo "Running analysis of all ME and DB listings to update database..."
+	docker-compose -f docker-compose.prod.yml run --rm worker python -m scripts.update_database_listings
+	@echo "Analysis complete."
