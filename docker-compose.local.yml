@@ -15,31 +15,16 @@ services:
     container_name: sniper-worker-local
     volumes:
       - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./src:/app/src
     env_file:
       - ./.env.local  # Use local environment variables
     environment:
-      - OTEL_EXPORTER_TYPE=JAEGER
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
       - POSTGRES_HOST=postgres # Use the service name for the hostname
     restart: always
     depends_on:
       postgres:
         condition: service_healthy
-
-  # --- The API Service ---
-  # api:
-  #   build:
-  #     context: ./src/api
-  #   container_name: sniper-api-local
-  #   ports:
-  #     - "5000:5000"
-  #   volumes:
-  #     - ./data:/app/data
-  #   env_file:
-  #     - ./.env.local # Use local environment variables
-  #   depends_on:
-  #     - postgres
-  #   restart: always
 
   # --- PostgreSQL Service ---
   postgres:
@@ -59,15 +44,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  # --- Jaeger Tracing Service ---
-  jaeger:
-    image: cr.jaegertracing.io/jaegertracing/jaeger:latest
-    container_name: jaeger-local
-    ports:
-      - "16686:16686"
-      - "4317:4317"
-    restart: always
 
 volumes:
   postgres_data:

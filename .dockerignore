@@ -17,6 +17,7 @@ env
 
 # Python cache and compiled files
 __pycache__/
+src/worker/__pycache__/
 *.py[codz]
 *$py.class
 

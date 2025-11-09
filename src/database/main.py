@@ -147,6 +147,16 @@ def get_listing_by_id(listing_id: str) -> dict | None:
         row = session.query(Listing).filter(Listing.listing_id == listing_id).first()
         return row.__dict__ if row else None
 
+def update_listing_details(listing_id: str, payload: dict):
+    """
+    Updates an existing listing with a dictionary of new values.
+    """
+    if not payload:
+        return
+    with get_session() as session:
+        session.query(Listing).filter(Listing.listing_id == listing_id).update(payload)
+        session.commit()
+
 def get_all_active_listings() -> list[dict]:
     """Fetches all listings that are currently marked as listed."""
     with get_session() as session:

@@ -133,7 +133,15 @@ class CartelBot(commands.Bot):
         while True:
             try:
                 snipe_data = await self.snipe_queue.get()
-                
+            except asyncio.CancelledError:
+                logging.info("Discord consumer loop cancelled.")
+                break # Exit loop on cancellation
+            except Exception:
+                logging.exception("Unexpected error getting from snipe_queue. Continuing...")
+                await asyncio.sleep(1) # Avoid fast spinning on continuous errors
+                continue
+
+            try:
                 listing_data = snipe_data.get('listing_data')
                 snipe_details = snipe_data.get('snipe_details')
                 alert_level = snipe_data.get('alert_level')
@@ -151,7 +159,7 @@ class CartelBot(commands.Bot):
                 logging.error(f"PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}. Check bot permissions. Error: {e}")
             except discord.errors.HTTPException as e:
                 logging.error(f"NETWORK ERROR: Failed to send message to Discord. Error: {e}")
-            except Exception as e: # Catch any other unexpected errors
+            except Exception: # Catch any other unexpected errors
                 logging.exception("An unexpected error occurred in the Discord consumer loop.")
             finally:
                 self.snipe_queue.task_done()

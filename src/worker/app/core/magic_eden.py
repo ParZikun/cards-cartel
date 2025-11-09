@@ -18,7 +18,7 @@ HEADERS = {
 }
 
 # Create a single, reusable async client
-async_client = httpx.AsyncClient(headers=HEADERS, timeout=10)
+async_client = httpx.AsyncClient(headers=HEADERS, timeout=20)
 
 def _get_attribute_value(attributes_list: list, target_trait: str):
     """Finds the value for a specific traitType within a list of attributes."""
@@ -87,19 +87,28 @@ def _process_listing(listing: dict):
         'listed_at': listing.get('updatedAt'), 
     }
 
-async def _fetch_with_retries_async(url: str, params: dict, retries: int = 3, delay: int = 5):
+async def _fetch_with_retries_async(url: str, params: dict, retries: int = 5, initial_delay: float = 1.0):
     """Handles API calls asynchronously with error handling and retries."""
+    delay = initial_delay
     for i in range(retries):
         try:
             response = await async_client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            return data.get('results', [])
+            if isinstance(data, dict):
+                return data.get('results', [])
+            if isinstance(data, list):
+                return data
+            logger.warning(f"Unexpected data type from ME API: {type(data)}")
+            return []
         except httpx.RequestError as e:
             logger.warning(f"ME API connection error (attempt {i+1}/{retries}): {e}")
-            await asyncio.sleep(delay)
-    logger.critical("ME API fetch failed after multiple retries. The service may be down.")
-    return None
+            if i < retries - 1:
+                await asyncio.sleep(delay)
+                delay *= 2
+            else:
+                logger.critical("ME API fetch failed after multiple retries. The service may be down.")
+    return []
 
 async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
     """Unified async fetch function for the new API."""
@@ -161,22 +170,119 @@ async def fetch_new_listings_async(processed_ids: set):
     """Fetches the most recent listings asynchronously and filters out any already processed."""
     return await _fetch_listings_async(processed_ids=processed_ids, limit=100)
 
-async def check_listing_status_async(mint_address: str) -> str | None:
+
+async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector_crypt'):
+    """
+    Fetches all listings for a given collection from Magic Eden's idxv2 API using pagination,
+    with server-side filtering similar to other functions in this module.
+    This is intended for a one-time full database sync.
+    """
+    logger.info(f"--- Starting full listing fetch for collection: {collection_symbol} using paginated idxv2 endpoint ---")
+    all_listings = []
+    
+    # Base URL for the efficient idxv2 endpoint
+    base_url = "https://api-mainnet.magiceden.us/idxv2/getListedNftsByCollectionSymbol"
+    
+    # Parameters with filters for Pokemon and graded cards, similar to fetch_new_listings_async
+    # This ensures we only request and process relevant listings.
+    params = {
+        'collectionSymbol': collection_symbol,
+        'limit': 100, # Fetch 100 items per page
+        'direction': 1,
+        'field': 2,
+        'attributes': json.dumps([
+            {"attributes": [{"traitType": "Category", "value": "Pokemon"}]},
+            {"attributes": [
+                {"traitType": "Grading Company", "value": "PSA"},
+                {"traitType": "Grading Company", "value": "Beckett"},
+                {"traitType": "Grading Company", "value": "BGS"}
+            ]}
+        ]),
+        'token22StandardFilter': 1,
+        'mplCoreStandardFilter': 1,
+        'mode': 'all',
+        'agg': 3,
+        'compressionMode': 'both'
+    }
+
+    page_count = 0
+    after_id = None # This will be our cursor for pagination
+
+    while True:
+        page_count += 1
+        
+        current_params = params.copy()
+        if after_id:
+            current_params['after'] = after_id
+
+        logger.info(f"Fetching page {page_count} (limit {current_params['limit']})...")
+        
+        try:
+            # Use the existing fetcher, which returns a list of raw listings
+            raw_listings = await _fetch_with_retries_async(base_url, current_params)
+            
+            # If the API returns an empty list, we've reached the end.
+            if not raw_listings:
+                logger.info("No more listings found. Concluding fetch.")
+                break
+
+            logger.info(f"Received {len(raw_listings)} raw listings from page {page_count}.")
+
+            for listing in raw_listings:
+                processed = _process_listing(listing)
+                if processed:
+                    all_listings.append(processed)
+            
+            # Get the ID of the last item to use as the cursor for the next page.
+            # If the ID is the same as the last one, we're in a loop.
+            last_listing_id = raw_listings[-1].get('id')
+            if not last_listing_id or last_listing_id == after_id:
+                if not last_listing_id:
+                    logger.warning("Could not find 'id' in the last listing to continue pagination. Stopping.")
+                else:
+                    logger.warning(f"Pagination cursor '{after_id}' did not change. Stopping to prevent infinite loop.")
+                break
+            
+            after_id = last_listing_id
+
+            # If we get less than the limit, it's the last page.
+            if len(raw_listings) < current_params['limit']:
+                logger.info(f"Received {len(raw_listings)} listings (less than limit). Assuming this is the last page.")
+                break
+
+            # Be respectful to the API by adding a delay between requests.
+            logger.debug("Waiting for 2 seconds before next paginated request...")
+            await asyncio.sleep(2) 
+
+        except Exception as e:
+            logger.exception(f"An error occurred during paginated fetch on page {page_count}.")
+            break # Exit on error to avoid infinite loops
+
+    logger.info(f"--- Fetched a total of {len(all_listings)} processed listings from Magic Eden. ---")
+    return all_listings
+
+async def check_listing_status_async(mint_address: str, retries: int = 5, initial_delay: float = 1.0) -> str | None:
     """
     Checks a single card's data asynchronously using the /v2/tokens/{mint} endpoint.
     Returns the full card data dictionary, or 'not_found'.
     """
     url = f"https://api-mainnet.magiceden.dev/v2/tokens/{mint_address}"
-    try:
-        response = await async_client.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            return data
-        elif response.status_code == 404:
-            return "not_found"
-        else:
-            logger.warning(f"ME API returned status {response.status_code} for {mint_address} during status check.")
-            return None
-    except httpx.RequestError as e:
-        logger.error(f"Request failed for {mint_address} status check: {e}")
-        return None
+    delay = initial_delay
+    for attempt in range(retries):
+        try:
+            response = await async_client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                return data
+            elif response.status_code == 404:
+                return "not_found"
+            else:
+                response.raise_for_status() # Raise an exception for other bad statuses to trigger a retry
+        except httpx.RequestError as e:
+            logger.warning(f"ME API check for {mint_address} failed on attempt {attempt + 1}/{retries}: {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(f"Request failed for {mint_address} status check after {retries} attempts.")
+    return None
