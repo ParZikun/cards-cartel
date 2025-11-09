@@ -20,6 +20,7 @@ help:
 	@echo "  prod-down       - Stop production services."
 	@echo "  prod-logs       - View logs for production services."
 	@echo "  prod-clean      - Stop production services and remove all associated volumes."
+	@echo "  prod-analyze    - Analyze ALL ME and DB listings and update database."
 
 
 # --- Local Environment Commands ---
@@ -50,6 +51,11 @@ local-clean:
 	@echo "Stopping local environment and removing volumes..."
 	docker-compose -f docker-compose.local.yml down --volumes
 
+local-analyze:
+	@echo "Running analysis of all ME and DB listings to update database..."
+	docker-compose -f docker-compose.local.yml run --rm worker python -m scripts.update_database_listings
+	@echo "Analysis complete."
+
 # --- Production Environment Commands ---
 prod-migrate:
 	@echo "Building production images..."
@@ -73,3 +79,8 @@ prod-logs:
 prod-clean:
 	@echo "Stopping production environment and removing volumes..."
 	docker-compose -f docker-compose.prod.yml down --volumes
+
+prod-analyze:
+	@echo "Running analysis of all ME and DB listings to update database..."
+	docker-compose -f docker-compose.prod.yml run --rm worker python -m scripts.update_database_listings
+	@echo "Analysis complete."
