@@ -108,27 +108,36 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
     logger.info(f"Processing: {listing.get('name')} ({listing.get('grading_id')})")
     
     try:
+        # --- 1. Fetch ALT Data ---
+        t0 = time.time()
         processed_alt_data = None
         async with ALT_API_SEMAPHORE:
-            # This will now wait if 10 other tasks are already running
             processed_alt_data = await alt.get_alt_data_async(
                 listing['grading_id'], 
                 listing.get('grade_num', 0), 
                 listing['grading_company']
             )
+        t1 = time.time()
+        logger.debug(f"ALT data fetch took: {t1 - t0:.3f}s")
         
         if not processed_alt_data:
             logger.warning(f"Could not fetch ALT data for {listing.get('name')}. Marking as SKIP.")
             await asyncio.to_thread(database.skip_listing, listing['listing_id'], 'SKIP')
             return False
 
+        # --- 2. Convert Price ---
+        t0 = time.time()
         prices = await utils.get_price_in_both_currencies(listing['price_amount'], listing['price_currency'])
+        t1 = time.time()
+        logger.debug(f"Price conversion took: {t1 - t0:.3f}s")
+
         if not prices:
             logger.error(f"Could not convert price for {listing.get('name')}. Skipping.")
             return False
 
         snipe_details = {**processed_alt_data, 'listing_price_usd': prices['price_usdc']}
         
+        # --- 3. Determine Alert Level ---
         alert_level = None
         alt_value = snipe_details.get('alt_value', 0)
         listing_price_usd = snipe_details.get('listing_price_usd', 0)
@@ -150,19 +159,21 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
                     alert_level = 'INFO'
                     cartel_category = 'OK'
         
-        duration = time.time() - start_time
-        
+        # --- 4. Queue Alert and Update DB ---
         found_deal = False
         if alert_level and send_alert:
             await queue.put({
                 'listing_data': listing, 
                 'snipe_details': snipe_details, 
                 'alert_level': alert_level,
-                'duration': duration
+                'duration': time.time() - start_time # Use overall duration for the alert
             })
             found_deal = True
        
+        t0 = time.time()
         await asyncio.to_thread(database.update_listing, listing['listing_id'], snipe_details, cartel_category)
+        t1 = time.time()
+        logger.debug(f"Database update took: {t1 - t0:.3f}s")
         
         if cartel_category != 'SKIP':
             token_mint = listing.get('token_mint')
@@ -170,7 +181,8 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
                 logger.info(f"Adding {token_mint} to reaper queue (Category: {cartel_category}).")
                 await verification_queue.put(token_mint)
 
-        logger.info(f"Successfully processed {listing.get('name')}. Took {duration:.3f}s. Alert: {alert_level}")
+        total_duration = time.time() - start_time
+        logger.info(f"Successfully processed {listing.get('name')}. Took {total_duration:.3f}s. Alert: {alert_level}")
         return found_deal
 
     except Exception as e:

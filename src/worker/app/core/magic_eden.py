@@ -138,8 +138,9 @@ async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
     raw_listings = await _fetch_with_retries_async(base_url, params)
     
     if not raw_listings:
-        return new_listings
+        return new_listings, 0
     
+    new_found_count = 0
     for listing in raw_listings:
         listing_id = listing.get('id')
         
@@ -148,27 +149,32 @@ async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
                 processed = _process_listing(listing)
                 if processed:
                     new_listings.append(processed)
-                else:
-                    processed_ids.add(listing_id)
-            else:
-                break
+                    new_found_count += 1
+                
+                # Add to processed_ids here so we don't process it again
+                processed_ids.add(listing_id)
         else:
+            # This branch is for initial population, where we don't have processed_ids
             processed = _process_listing(listing)
             if processed:
                 new_listings.append(processed)
+
+    if new_found_count > 0:
+        logger.info(f"Found {new_found_count} new listings from ME.")
                 
-    return new_listings
+    return new_listings, new_found_count
 
 async def fetch_initial_listings_async(limit: int = 100):
     """Fetches a specific number of recent listings for initial DB population, asynchronously."""
     logger.info(f"Fetching latest {limit} listings to populate database...")
-    initial_listings = await _fetch_listings_async(None, limit=limit)
+    initial_listings, _ = await _fetch_listings_async(None, limit=limit)
     processed_ids = {listing['listing_id'] for listing in initial_listings if listing and listing.get('listing_id')}
     return initial_listings, processed_ids
 
 async def fetch_new_listings_async(processed_ids: set):
     """Fetches the most recent listings asynchronously and filters out any already processed."""
-    return await _fetch_listings_async(processed_ids=processed_ids, limit=100)
+    new_listings, _ = await _fetch_listings_async(processed_ids=processed_ids, limit=100)
+    return new_listings
 
 
 async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector_crypt'):
