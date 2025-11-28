@@ -254,3 +254,6 @@ __marimo__/
 cc/
 archive/
 *.pem
+
+.vscode/
+.idea/

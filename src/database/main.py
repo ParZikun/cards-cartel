@@ -49,6 +49,25 @@ class Listing(Base):
     is_listed = Column(Boolean, default=True)
     last_analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class User(Base):
+    __tablename__ = "users"
+
+    wallet_address = Column(String(44), primary_key=True)
+    tier = Column(String(10), default='NORMAL') # 'GOLD', 'NORMAL', 'BLOCKED'
+    status = Column(String(10), default='ACTIVE') # 'ACTIVE', 'SUSPENDED'
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_login_at = Column(DateTime(timezone=True))
+
+class UserSettings(Base):
+    __tablename__ = "user_settings"
+
+    user_wallet = Column(String(44), primary_key=True) # Foreign key to users.wallet_address
+    max_price = Column(Float, default=10.0)
+    priority_fee = Column(Float, default=0.005)
+    slippage = Column(Float, default=1.0)
+    auto_buy_enabled = Column(Boolean, default=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 # --- Database Functions ---
 def init_db():
     """
@@ -189,3 +208,43 @@ def get_skipped_listings(since: datetime | None) -> list[dict]:
             query = query.filter(Listing.last_analyzed_at >= since)
         rows = query.all()
         return [row.__dict__ for row in rows]
+
+def create_user(wallet_address: str, tier: str = 'NORMAL') -> dict:
+    """
+    Creates a new user if they don't exist. Returns the user dict.
+    """
+    with get_session() as session:
+        user = session.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            user = User(wallet_address=wallet_address, tier=tier)
+            session.add(user)
+            # Create default settings for the user
+            settings = UserSettings(user_wallet=wallet_address)
+            session.add(settings)
+            session.commit()
+            logger.info(f"Created new user: {wallet_address} ({tier})")
+        return user.__dict__
+
+def get_user(wallet_address: str) -> dict | None:
+    """
+    Fetches a user by wallet address.
+    """
+    with get_session() as session:
+        user = session.query(User).filter(User.wallet_address == wallet_address).first()
+        return user.__dict__ if user else None
+
+def get_user_settings(wallet_address: str) -> dict | None:
+    """
+    Fetches settings for a specific user.
+    """
+    with get_session() as session:
+        settings = session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).first()
+        return settings.__dict__ if settings else None
+
+def update_user_settings(wallet_address: str, settings_update: dict):
+    """
+    Updates the settings for a user.
+    """
+    with get_session() as session:
+        session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
+        session.commit()
