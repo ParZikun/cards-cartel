@@ -10,13 +10,28 @@ services:
       dockerfile: src/worker/Dockerfile
     container_name: sniper-worker-prod
     volumes:
-      - ./data:/app/data  # Links our SQLite DB for the migration
+      - ./data:/app/data # Links our SQLite DB for the migration
       - ./scripts:/app/scripts
       - ./src:/app/src
     env_file:
-      - ./.env  # Use production environment variables from .env
+      - ./.env # Use production environment variables from .env
     restart: always
     # 'depends_on' is removed
+
+    # --- The API Service ---
+  api:
+    build:
+      context: .
+      dockerfile: src/api/Dockerfile
+    container_name: sniper-api-prod
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+    env_file:
+      - ./.env
+    restart: always
 
 # 'postgres_data_prod' volume is no longer needed
 volumes: {}

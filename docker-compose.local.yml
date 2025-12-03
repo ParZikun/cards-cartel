@@ -18,9 +18,29 @@ services:
       - ./scripts:/app/scripts
       - ./src:/app/src
     env_file:
-      - ./.env.local  # Use local environment variables
+      - ./.env.local
     environment:
-      - POSTGRES_HOST=postgres # Use the service name for the hostname
+      - POSTGRES_HOST=postgres
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- The API Service ---
+  api:
+    build:
+      context: .
+      dockerfile: src/api/Dockerfile
+    container_name: sniper-api-local
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+    env_file:
+      - ./.env.local
+    environment:
+      - POSTGRES_HOST=postgres
     restart: always
     depends_on:
       postgres:
@@ -40,7 +60,7 @@ services:
       - POSTGRES_HOST=0.0.0.0
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
       interval: 5s
       timeout: 5s
       retries: 5

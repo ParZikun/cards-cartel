@@ -33,11 +33,11 @@ local-migrate:
 	done;
 	python -m scripts.migrate_prod_to_postgres
 	@echo "Starting remaining services..."
-	docker-compose -f docker-compose.local.yml up --build -d worker
+	docker-compose -f docker-compose.local.yml up --build -d worker api
 
 local-up:
 	@echo "Starting local environment with postgres and worker..."
-	docker-compose -f docker-compose.local.yml up --build -d postgres worker
+	docker-compose -f docker-compose.local.yml up --build -d postgres worker api
 
 local-down:
 	@echo "Stopping local environment..."

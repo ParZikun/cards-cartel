@@ -50,6 +50,11 @@ async def reaper(verification_queue: asyncio.Queue, snipe_queue: asyncio.Queue):
             if isinstance(card_data, dict) and card_data.get('listStatus') == "listed":
                 listing = await asyncio.to_thread(database.get_listing_by_mint, mint_address)
                 if listing:
+                    # Update listing with fresh price from ME
+                    fresh_price = card_data.get('price')
+                    if fresh_price:
+                        listing['price_amount'] = float(fresh_price)
+
                     last_analyzed_str = listing.get('last_analyzed_at')
                     last_analyzed_at = None
                     if not last_analyzed_str:
@@ -66,7 +71,7 @@ async def reaper(verification_queue: asyncio.Queue, snipe_queue: asyncio.Queue):
                         last_analyzed_at = datetime.fromtimestamp(0, tz=timezone.utc)
                     
                     if datetime.now(timezone.utc) - last_analyzed_at > timedelta(hours=24):
-                        logger.info(f"Reaper: Re-analyzing stale listing for {listing.get('name')}.")
+                        logger.debug(f"Reaper: Re-analyzing stale listing for {listing.get('name')}.")
                         await process_listing(listing, snipe_queue, send_alert=True)
                 
                 await verification_queue.put(mint_address)
@@ -86,6 +91,8 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
     The complete, atomic pipeline for a single listing.
     Returns True if a new deal was found, False otherwise.
     """
+    skip_alt_fetch = False
+    
     # If this card is already in our database, check when we last analyzed it.
     if 'last_analyzed_at' in listing and listing['last_analyzed_at'] is not None:
         try:
@@ -99,26 +106,39 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
 
             # If it was analyzed in the last 7 days, we can skip the ALT API call
             if (datetime.now(timezone.utc) - last_analyzed_dt).days < 7:
-                logger.info(f"CACHE HIT: Skipping ALT analysis for {listing.get('name')} (last analyzed {last_analyzed_dt.strftime('%Y-%m-%d')})")
-                return False # Return False because we didn't find a *new* deal
+                logger.debug(f"CACHE HIT: Skipping ALT analysis for {listing.get('name')} (last analyzed {last_analyzed_dt.strftime('%Y-%m-%d')})")
+                skip_alt_fetch = True
         except (ValueError, TypeError) as e:
             logger.warning(f"Could not parse 'last_analyzed_at' timestamp '{listing['last_analyzed_at']}'. Re-analyzing. Error: {e}")
             
     start_time = time.time()
-    logger.info(f"Processing: {listing.get('name')} ({listing.get('grading_id')})")
+    logger.debug(f"Processing: {listing.get('name')} ({listing.get('grading_id')})")
     
     try:
-        # --- 1. Fetch ALT Data ---
-        t0 = time.time()
+        # --- 1. Fetch ALT Data (or use cached) ---
         processed_alt_data = None
-        async with ALT_API_SEMAPHORE:
-            processed_alt_data = await alt.get_alt_data_async(
-                listing['grading_id'], 
-                listing.get('grade_num', 0), 
-                listing['grading_company']
-            )
-        t1 = time.time()
-        logger.debug(f"ALT data fetch took: {t1 - t0:.3f}s")
+        
+        if skip_alt_fetch:
+            # Use existing data from the listing object
+            processed_alt_data = {
+                'alt_asset_id': listing.get('alt_asset_id'),
+                'alt_value': listing.get('alt_value', 0),
+                'avg_price': listing.get('avg_price', 0),
+                'supply': listing.get('supply', 0),
+                'lower_bound': listing.get('alt_value_lower_bound', 0),
+                'upper_bound': listing.get('alt_value_upper_bound', 0),
+                'confidence': listing.get('alt_value_confidence', 0)
+            }
+        else:
+            t0 = time.time()
+            async with ALT_API_SEMAPHORE:
+                processed_alt_data = await alt.get_alt_data_async(
+                    listing['grading_id'], 
+                    listing.get('grade_num', 0), 
+                    listing['grading_company']
+                )
+            t1 = time.time()
+            logger.debug(f"ALT data fetch took: {t1 - t0:.3f}s")
         
         if not processed_alt_data:
             logger.warning(f"Could not fetch ALT data for {listing.get('name')}. Marking as SKIP.")
@@ -178,11 +198,14 @@ async def process_listing(listing: dict, queue: asyncio.Queue, send_alert: bool 
         if cartel_category != 'SKIP':
             token_mint = listing.get('token_mint')
             if token_mint:
-                logger.info(f"Adding {token_mint} to reaper queue (Category: {cartel_category}).")
+                logger.debug(f"Adding {token_mint} to reaper queue (Category: {cartel_category}).")
                 await verification_queue.put(token_mint)
 
         total_duration = time.time() - start_time
-        logger.info(f"Successfully processed {listing.get('name')}. Took {total_duration:.3f}s. Alert: {alert_level}")
+        if alert_level:
+             logger.info(f"Successfully processed {listing.get('name')}. Took {total_duration:.3f}s. Alert: {alert_level}")
+        else:
+             logger.debug(f"Processed {listing.get('name')} (No Alert). Took {total_duration:.3f}s.")
         return found_deal
 
     except Exception as e:
