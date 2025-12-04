@@ -59,6 +59,23 @@ def _process_listing(listing: dict):
     
     try:
         grade_num = float(grade_num_str) if grade_num_str is not None else 0.0
+        
+        # --- Grade Verification from Attribute String ---
+        # "The Grade" attribute often contains the number mixed with text (e.g. "9-Mint", "GEM-MT 10").
+        # We extract the number from this string to ensure accuracy.
+        if grade:
+            grade_match = re.search(r"(\d+(?:\.\d+)?)", str(grade))
+            if grade_match:
+                try:
+                    grade_from_str = float(grade_match.group(1))
+                    if grade_from_str != grade_num:
+                        logger.debug(f"Grade mismatch for {name}: Attr String '{grade}' says {grade_from_str}, GradeNum says {grade_num}. Using String.")
+                        grade_num = grade_from_str
+                        # Update the grade variable to be the number, as that's what we usually want for logic
+                        grade = str(grade_from_str)
+                except ValueError:
+                    pass
+        # ------------------------------------
         insured_value = float(insured_value_str) if insured_value_str is not None else 0.0
         price_sol = float(listing.get('price', 0))
     except (ValueError, TypeError) as e:

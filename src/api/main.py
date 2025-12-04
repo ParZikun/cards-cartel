@@ -4,6 +4,7 @@ import asyncio
 import json
 import httpx
 import requests
+import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 from fastapi import FastAPI, Query, Request
@@ -338,6 +339,7 @@ async def get_wallet_holdings(
                 
                 cert_id = get_attr(attributes, "Grading ID")
                 grade_raw = get_attr(attributes, "GradeNum")
+                grade_str_attr = get_attr(attributes, "The Grade") # Get the string representation
                 company = get_attr(attributes, "Grading Company")
                 
                 if cert_id and grade_raw and company:
@@ -347,6 +349,21 @@ async def get_wallet_holdings(
 
                     try:
                         grade = float(grade_raw)
+                        
+                        # --- Grade Verification from Attribute String ---
+                        # Verify with "The Grade" string using regex
+                        if grade_str_attr:
+                             grade_match = re.search(r"(\d+(?:\.\d+)?)", str(grade_str_attr))
+                             if grade_match:
+                                 try:
+                                     grade_from_str = float(grade_match.group(1))
+                                     if grade_from_str != grade:
+                                         logger.debug(f"Grade mismatch for {name}: Attr String '{grade_str_attr}' says {grade_from_str}, GradeNum says {grade}. Using String.")
+                                         grade = grade_from_str
+                                 except ValueError:
+                                     pass
+                        # ------------------------------------
+
                         tasks.append(fetch_with_semaphore(client, mint, cert_id, grade, company))
                     except ValueError:
                         pass
