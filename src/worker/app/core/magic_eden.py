@@ -2,6 +2,7 @@ import httpx
 import json
 import asyncio
 import logging
+import re
 
 # Initialize a logger for this module
 logger = logging.getLogger(__name__)

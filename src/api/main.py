@@ -22,8 +22,6 @@ GRAPHQL_URL = "https://alt-platform-server.production.internal.onlyalt.com/graph
 # NOTE: These should be in environment variables
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 COOKIE = os.getenv("COOKIE")
-
-BLACKLISTED_KEYWORDS = ['black star', 'sticker', 'stickers']
 ALT_CONCURRENCY_LIMIT = 3 # Limit concurrent requests to avoid rate limiting
 
 HEADERS = {
@@ -284,13 +282,7 @@ async def get_wallet_holdings(
         me_url = f"https://api-mainnet.magiceden.dev/v2/wallets/{wallet}/tokens"
         
         attributes_filter = [
-            [{"traitType": "Category", "value": "Pokemon"}],
-            [
-                {"traitType": "Grading Company", "value": "PSA"},
-                {"traitType": "Grading Company", "value": "Beckett"},
-                {"traitType": "Grading Company", "value": "BGS"},
-                {"traitType": "Grading Company", "value": "CGC"} 
-            ]
+            [{"traitType": "Category", "value": "Pokemon"}]
         ]
         
         params = {
@@ -314,7 +306,7 @@ async def get_wallet_holdings(
         async def fetch_with_semaphore(client, mint, cert_id, grade, company):
             async with semaphore:
                 # Add a small delay before each request to be polite/avoid rate limits
-                await asyncio.sleep(0.5) 
+                await asyncio.sleep(0.3) 
                 res = await get_alt_data_async(client, cert_id, grade, company)
                 return mint, res
         
@@ -324,10 +316,6 @@ async def get_wallet_holdings(
             for token in tokens:
                 mint = token.get('mintAddress')
                 name = token.get('name', '')
-                
-                # Blacklist check
-                if any(keyword in name.lower() for keyword in BLACKLISTED_KEYWORDS):
-                    continue
                 
                 attributes = token.get('attributes', [])
                 
@@ -384,10 +372,6 @@ async def get_wallet_holdings(
             mint = token.get('mintAddress')
             name = token.get('name', '')
             
-            # Blacklist check (again, to filter output)
-            if any(keyword in name.lower() for keyword in BLACKLISTED_KEYWORDS):
-                continue
-
             attributes = token.get('attributes', [])
             
             def get_attr(attrs, trait):
@@ -435,7 +419,7 @@ async def get_wallet_holdings(
                 diff = alt_value - price_amount
 
             formatted_tokens.append({
-                "listing_id": f"sol-{token_mint}", # Generate a pseudo ID
+                "grading_id": grading_id,
                 "name": name,
                 "grade_num": grade_num,
                 "grade": grade,
@@ -443,11 +427,9 @@ async def get_wallet_holdings(
                 "insured_value": insured_value,
                 "grading_company": grading_company,
                 "img_url": img_url,
-                "grading_id": grading_id,
                 "token_mint": token_mint,
                 "price_amount": price_amount,
                 "price_currency": price_currency,
-                "listed_at": None, # Not available in this endpoint
                 "alt_value": alt_value,
                 "avg_price": avg_price,
                 "supply": supply,
@@ -455,10 +437,10 @@ async def get_wallet_holdings(
                 "alt_value_lower_bound": alt_value_lower_bound,
                 "alt_value_upper_bound": alt_value_upper_bound,
                 "alt_value_confidence": alt_value_confidence,
-                "cartel_category": "HOLDING", # Updated to HOLDING
+                "cartel_category": "HOLDING",
                 "is_listed": is_listed,
                 "last_analyzed_at": datetime.now().isoformat(),
-                "diff": diff # Extra field for frontend convenience
+                "diff": diff 
             })
 
         return {

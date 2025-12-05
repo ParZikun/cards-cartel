@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import logging
 import logging.config
 import yaml
+import re
 
 # --- Centralized Environment Loading ---
 # Load .env.local for local development, otherwise fall back to .env
