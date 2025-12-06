@@ -68,6 +68,22 @@ class UserSettings(Base):
     auto_buy_enabled = Column(Boolean, default=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+class AltValuation(Base):
+    __tablename__ = "alt_valuations"
+
+    # Composite unique key or just a string signature? 
+    # Using grading_id (cert number) as the primary key is risky if different companies have same cert but unlikely for our scope.
+    # Better to use a composite string or specific columns. 
+    # Let's use a "signature_id" string: "{company}_{grade}_{cert_id}" normalized.
+    signature_id = Column(String, primary_key=True) 
+    
+    alt_value = Column(Float)
+    alt_value_min = Column(Float)
+    alt_value_max = Column(Float)
+    confidence = Column(Float)
+    alt_asset_id = Column(String)
+    last_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 # --- Database Functions ---
 def init_db():
     """
@@ -145,6 +161,12 @@ def update_listing_status(mint_address: str, is_listed: bool):
         session.commit()
         logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
 
+def to_dict(obj):
+    """Converts a SQLAlchemy model to a dictionary, excluding internal state."""
+    if not obj:
+        return None
+    return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+
 def get_active_deals_by_category(categories: list, limit: int = 25) -> list[dict]:
     """
     Fetches active deals for a given list of cartel_categories.
@@ -152,11 +174,11 @@ def get_active_deals_by_category(categories: list, limit: int = 25) -> list[dict
     if not categories:
         return []
     with get_session() as session:
-        rows = session.query(Listing.name, Listing.listing_id).filter(
+        rows = session.query(Listing).filter(
             Listing.is_listed == True,
             Listing.cartel_category.in_(categories)
         ).order_by(Listing.listed_at.desc()).limit(limit).all()
-        return [{"name": row[0], "listing_id": row[1]} for row in rows]
+        return [to_dict(row) for row in rows]
 
 def get_listing_by_id(listing_id: str) -> dict | None:
     """
@@ -164,7 +186,7 @@ def get_listing_by_id(listing_id: str) -> dict | None:
     """
     with get_session() as session:
         row = session.query(Listing).filter(Listing.listing_id == listing_id).first()
-        return row.__dict__ if row else None
+        return to_dict(row)
 
 def update_listing_details(listing_id: str, payload: dict):
     """
@@ -180,13 +202,13 @@ def get_all_active_listings() -> list[dict]:
     """Fetches all listings that are currently marked as listed."""
     with get_session() as session:
         rows = session.query(Listing).filter(Listing.is_listed == True).all()
-        return [row.__dict__ for row in rows]
+        return [to_dict(row) for row in rows]
 
 def get_listing_by_mint(mint_address: str) -> dict | None:
     """Fetches all details for a single listing by its mint address."""
     with get_session() as session:
         row = session.query(Listing).filter(Listing.token_mint == mint_address).first()
-        return row.__dict__ if row else None
+        return to_dict(row)
 
 def get_skipped_listings(since: datetime | None) -> list[dict]:
     """
@@ -207,7 +229,7 @@ def get_skipped_listings(since: datetime | None) -> list[dict]:
         if since:
             query = query.filter(Listing.last_analyzed_at >= since)
         rows = query.all()
-        return [row.__dict__ for row in rows]
+        return [to_dict(row) for row in rows]
 
 def create_user(wallet_address: str, tier: str = 'NORMAL') -> dict:
     """
@@ -223,7 +245,7 @@ def create_user(wallet_address: str, tier: str = 'NORMAL') -> dict:
             session.add(settings)
             session.commit()
             logger.info(f"Created new user: {wallet_address} ({tier})")
-        return user.__dict__
+        return to_dict(user)
 
 def get_user(wallet_address: str) -> dict | None:
     """
@@ -231,7 +253,7 @@ def get_user(wallet_address: str) -> dict | None:
     """
     with get_session() as session:
         user = session.query(User).filter(User.wallet_address == wallet_address).first()
-        return user.__dict__ if user else None
+        return to_dict(user)
 
 def get_user_settings(wallet_address: str) -> dict | None:
     """

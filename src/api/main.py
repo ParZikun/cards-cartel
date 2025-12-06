@@ -5,13 +5,15 @@ import json
 import httpx
 import requests
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from fastapi import FastAPI, Query, Request
+
+from fastapi import FastAPI, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from database import main as db
 from sqlalchemy import desc
+from worker.app.core import syncer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -192,6 +194,72 @@ async def get_alt_data_async(client, cert_id, grade, company, retries=3, initial
                 delay *= 2
     return None
 
+def get_cached_alt_data(signature_id: str):
+    """Checks DB for cached Alt Valuation data < 24h old."""
+    try:
+        with db.get_session() as session:
+            valuation = session.query(db.AltValuation).filter(db.AltValuation.signature_id == signature_id).first()
+            if valuation:
+                # Check freshness (e.g., 24 hours)
+                # Use timezone-aware comparison
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+                
+                last_updated = valuation.last_updated_at
+                # Handle case where DB returns naive (though it should be aware if column is DateTime(timezone=True))
+                if last_updated and last_updated.tzinfo is None:
+                    last_updated = last_updated.replace(tzinfo=timezone.utc)
+
+                if last_updated and last_updated >= cutoff:
+                    logger.info(f"Cache HIT for {signature_id}")
+                    return {
+                        "alt_asset_id": valuation.alt_asset_id,
+                        "alt_value": valuation.alt_value,
+                        "avg_price": 0.0, # Not storing historical avg in this table yet, simple caching
+                        "supply": 0,      # Not storing supply yet
+                        "lower_bound": valuation.alt_value_min,
+                        "upper_bound": valuation.alt_value_max,
+                        "confidence": valuation.confidence
+                    }
+                else:
+                    logger.info(f"Cache STALE for {signature_id}")
+            else:
+                logger.info(f"Cache MISS for {signature_id}")
+    except Exception as e:
+        logger.error(f"Error reading Alt Cache: {e}")
+    return None
+
+def cache_alt_data(signature_id: str, data: dict):
+    """Saves Alt Valuation data to DB."""
+    try:
+        with db.get_session() as session:
+            # Upsert
+            stmt = db.insert(db.AltValuation).values(
+                signature_id=signature_id,
+                alt_asset_id=data.get('alt_asset_id'),
+                alt_value=data.get('alt_value'),
+                alt_value_min=data.get('lower_bound'),
+                alt_value_max=data.get('upper_bound'),
+                confidence=data.get('confidence'),
+                last_updated_at=datetime.utcnow()
+            )
+            update_dict = {
+                "alt_value": stmt.excluded.alt_value,
+                "alt_value_min": stmt.excluded.alt_value_min,
+                "alt_value_max": stmt.excluded.alt_value_max,
+                "confidence": stmt.excluded.confidence,
+                "last_updated_at": datetime.utcnow()
+            }
+            # PostgreSQL On Conflict Update
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['signature_id'],
+                set_=update_dict
+            )
+            session.execute(stmt)
+            session.commit()
+            logger.info(f"Cached Alt data for {signature_id}")
+    except Exception as e:
+        logger.error(f"Error caching Alt data: {e}")
+
 app = FastAPI(title="Cards Cartel API")
 
 # CORS Configuration
@@ -303,11 +371,19 @@ async def get_wallet_holdings(
         alt_data_map = {}
         semaphore = asyncio.Semaphore(ALT_CONCURRENCY_LIMIT)
 
-        async def fetch_with_semaphore(client, mint, cert_id, grade, company):
+        async def fetch_with_semaphore(client, mint, cert_id, grade, company, signature_id):
             async with semaphore:
                 # Add a small delay before each request to be polite/avoid rate limits
                 await asyncio.sleep(0.3) 
+                
+                # Double-check cache inside worker just in case? No, outer check is enough for now.
+                
                 res = await get_alt_data_async(client, cert_id, grade, company)
+                
+                if res:
+                    # Cache the result!
+                    cache_alt_data(signature_id, res)
+                    
                 return mint, res
         
         async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client: # Increased timeout
@@ -331,8 +407,19 @@ async def get_wallet_holdings(
                 company = get_attr(attributes, "Grading Company")
                 
                 if cert_id and grade_raw and company:
+                    # Normalize Company Name for Alt
+                    company_upper = company.upper()
+                    if "BECKETT" in company_upper or "BGS" in company_upper:
+                        company = "BGS"
+                    elif "PSA" in company_upper:
+                        company = "PSA"
+                    elif "SGC" in company_upper:
+                        company = "SGC"
+                    elif "CGC" in company_upper:
+                        company = "CGC"
+                        
                     # Skip CGC as Alt doesn't support it
-                    if company.upper() == "CGC":
+                    if company == "CGC":
                         continue
 
                     try:
@@ -351,12 +438,22 @@ async def get_wallet_holdings(
                                  except ValueError:
                                      pass
                         # ------------------------------------
-
-                        tasks.append(fetch_with_semaphore(client, mint, cert_id, grade, company))
+                        
+                        # CACHE CHECK
+                        signature_id = f"{company}_{grade}_{cert_id}"
+                        cached_data = get_cached_alt_data(signature_id)
+                        
+                        if cached_data:
+                            alt_data_map[mint] = cached_data
+                            # If we have cached data, we might miss 'avg_price' or 'supply' if they aren't in the cache table yet.
+                            # For now, this tradeoff is acceptable for speed.
+                        else:
+                            tasks.append(fetch_with_semaphore(client, mint, cert_id, grade, company, signature_id))
+                            
                     except ValueError:
                         pass
                 else:
-                    logger.warning(f"Missing Alt data params for mint {mint}")
+                    pass # logger.warning(f"Missing Alt data params for mint {mint}")
 
             if tasks:
                 results = await asyncio.gather(*tasks)
@@ -488,6 +585,166 @@ async def sse_endpoint(request: Request):
 
     return EventSourceResponse(event_generator())
 
-if __name__ == "__main__":
+
+@app.post("/api/trigger/full-recheck")
+async def trigger_full_recheck(background_tasks: BackgroundTasks):
+    """
+    Triggers a full database sync and recheck in the background.
+    """
+    logger.info("Received request to trigger full recheck.")
+    # We pass None for the queue as the API process doesn't own the Discord bot queue
+    background_tasks.add_task(syncer.full_sync, queue=None)
+    return {"status": "accepted", "message": "Full recheck started in background."}
+
+@app.post("/api/trigger/recheck")
+async def trigger_recheck(request: Request):
+    """
+    Triggers a recheck of skipped listings for a specific duration.
+    Body: {"duration": "1H", "category": "SKIP"} (Category implicit in recheck logic for now)
+    Blocking call: Waits for recheck to complete.
+    """
+    try:
+        body = await request.json()
+        duration = body.get("duration", "1H")
+        
+        logger.info(f"Received request to trigger recheck for duration: {duration}")
+        # Await the process so the frontend knows when it's done
+        new_deals = await syncer.recheck_listings(duration_str=duration, queue=None)
+        
+        return {"status": "success", "message": f"Recheck for {duration} complete. Found {new_deals} new deals."}
+    except Exception as e:
+        logger.error(f"Error parsing recheck request: {e}")
+        return {"status": "error", "message": str(e)}
+
+# Import processor and magic_eden for inspect functionality
+from worker.app.core import processor
+from worker.app.core import magic_eden as me
+
+@app.get("/api/inspect-card")
+async def inspect_card(query: str = Query(..., description="Mint Address or Grading ID")):
+    """
+    Inspects a card by Mint Address or Grading ID.
+    1. Checks Database.
+    2. If found < 24h old, returns DB data.
+    3. If not found or stale AND query is a Mint Address:
+       - Fetches live from Magic Eden.
+       - Processes (fetches Alt data).
+       - Updates DB.
+       - Returns fresh data.
+    4. If Grading ID and not in DB => 404 (Cannot find mint from grading ID efficiently).
+    """
+    query = query.strip()
+    listing = None
+    
+    # 1. Check Database
+    with db.get_session() as session:
+        # Search by mint OR grading_id
+        # Note: We need exact match for now
+        listing_obj = session.query(db.Listing).filter(
+            (db.Listing.token_mint == query) | 
+            (db.Listing.grading_id == query)
+        ).first()
+        
+        if listing_obj:
+            listing = listing_obj.__dict__
+            
+    # 2. Check Freshness
+    is_stale = False
+    if listing:
+        last_analyzed = listing.get('last_analyzed_at')
+        if not last_analyzed:
+            is_stale = True
+        else:
+            if isinstance(last_analyzed, str):
+                last_analyzed = datetime.fromisoformat(last_analyzed.replace('Z', '+00:00'))
+            if last_analyzed.tzinfo is None:
+                last_analyzed = last_analyzed.replace(tzinfo=timezone.utc)
+                
+            if datetime.now(timezone.utc) - last_analyzed > timedelta(hours=24):
+                is_stale = True
+    
+    # 3. If missing or stale, try Live Update (ONLY if we have a mint address)
+    # If we found a stale listing in DB, we have the mint address from it.
+    # If we found nothing, we assume the query MIGHT be a mint address.
+    
+    mint_to_check = None
+    if listing:
+        mint_to_check = listing.get('token_mint')
+    elif len(query) > 30 and " " not in query: # Rudimentary check for potential mint address
+        mint_to_check = query
+        
+    if (not listing or is_stale) and mint_to_check:
+        logger.info(f"Inspect: Fetching live data for {mint_to_check}...")
+        try:
+            # A. Fetch from ME
+            card_data = await me.check_listing_status_async(mint_to_check)
+            
+            if isinstance(card_data, dict) and card_data.get('mintAddress'):
+                # B. Construct Listing Object (Partial)
+                # We need to map the raw ME response to what 'process_listing' expects (simulating _process_listing from magic_eden.py)
+                # Actually, `me.check_listing_status_async` returns raw /v2/tokens/ data which is DIFFERENT from /idxv2/ data structure used in `_process_listing`.
+                # We need to adapt it. 
+                
+                # Check list status
+                is_listed = card_data.get('listStatus') == 'listed'
+                price = float(card_data.get('price', 0)) if is_listed else 0.0
+                
+                # Extract Attributes
+                attributes = card_data.get('attributes', [])
+                def get_val(key):
+                    for a in attributes:
+                        if a.get('trait_type') == key: return a.get('value')
+                    return None
+                    
+                grading_id = get_val("Grading ID") 
+                grading_company = get_val("Grading Company")
+                grade_num_str = get_val("GradeNum")
+                grade_str = get_val("The Grade")
+                
+                if grading_id and grading_company:
+                    # Normalize logic similar to magic_eden.py
+                    company = grading_company
+                    if "BECKETT" in company.upper() or "BGS" in company.upper(): company = "BGS"
+                    elif "PSA" in company.upper(): company = "PSA"
+                        
+                    grade_num = float(grade_num_str) if grade_num_str else 0.0
+                    
+                    listing_input = {
+                        'listing_id': "manual_inspect", # Placeholder
+                        'name': card_data.get('name'),
+                        'grade_num': grade_num,
+                        'grade': grade_str or str(grade_num),
+                        'category': get_val("Category") or "Card",
+                        'insured_value': float(get_val("Insured Value") or 0),
+                        'grading_company': company,
+                        'img_url': card_data.get('image'),
+                        'grading_id': grading_id,
+                        'token_mint': mint_to_check,
+                        'price_amount': price,
+                        'price_currency': 'SOL',
+                        'listed_at': datetime.now(timezone.utc).isoformat(), # Approximation
+                        # Add fields expected by processor if needed
+                    }
+                    
+                    # C. Process (Enrich with Alt Data + Update DB)
+                    # Note: process_listing saves to DB!
+                    await processor.process_listing(listing_input, queue=None, send_alert=False)
+                    
+                    # D. Re-fetch from DB to get the full, clean object
+                    with db.get_session() as session:
+                        listing_obj = session.query(db.Listing).filter(db.Listing.token_mint == mint_to_check).first()
+                        if listing_obj:
+                            listing = listing_obj.__dict__
+            else:
+                logger.warning(f"Inspect: Mint {mint_to_check} not found on ME or invalid.")
+                
+        except Exception as e:
+            logger.error(f"Inspect Live Fetch Error: {e}")
+            
+    if listing:
+        return listing
+    else:
+        # 404
+        return {"error": "Card not found in Database and could not be fetched from Magic Eden (Must provide valid Mint Address for live fetch)."}
     import uvicorn
     uvicorn.run(app, host="localhost", port=8000)
