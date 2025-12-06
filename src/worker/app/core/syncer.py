@@ -55,7 +55,21 @@ async def full_sync(queue: asyncio.Queue = None):
             else:
                 logger.error(f"Could not retrieve new listing {mint} from DB after saving.")
         else:
-            # Existing listing, re-analyze
+            # Existing listing
+            # Check if it was analyzed recently (< 24h)
+            last_analyzed = db_listing.get('last_analyzed_at')
+            if last_analyzed:
+                if isinstance(last_analyzed, str):
+                    last_analyzed = datetime.fromisoformat(last_analyzed.replace('Z', '+00:00'))
+                if last_analyzed.tzinfo is None:
+                    last_analyzed = last_analyzed.replace(tzinfo=timezone.utc)
+                
+                # User Optimization: Skip if updated < 24h ago
+                if datetime.now(timezone.utc) - last_analyzed < timedelta(hours=24):
+                    logger.debug(f"Skipping {mint} (Analyzed recently: {last_analyzed})")
+                    continue
+            
+            # If stale, re-analyze
             # logger.info(f"Existing listing found: {me_listing['name']}. Re-analyzing.")
             db_listing['price_amount'] = me_listing['price_amount']
             found, _ = await processor.process_listing(db_listing, queue)
@@ -120,8 +134,35 @@ async def recheck_listings(duration_str: str, queue: asyncio.Queue = None):
 
     logger.info(f"Found {len(skipped_listings)} 'SKIP' listings to re-process.")
     
+    # Define freshness thresholds (User requested ~25% of duration)
+    # If list was updated more recently than this, skip it.
+    freshness_map = {
+        "1H": timedelta(minutes=15),
+        "2H": timedelta(minutes=30),
+        "6H": timedelta(hours=1, minutes=30),
+        "12H": timedelta(hours=3),
+        "24H": timedelta(hours=6),
+        "1D": timedelta(hours=6),
+        "1W": timedelta(days=1),   # ~15% but reasonable
+        "1M": timedelta(days=5),
+        "ALL": timedelta(days=1)   # Default for ALL is 24h
+    }
+    freshness_threshold = freshness_map.get(duration_str.upper(), timedelta(minutes=15)) # Default to 15m
+    
     new_deals_count = 0
     for i, listing in enumerate(skipped_listings):
+        # Freshness Check
+        last_analyzed = listing.get('last_analyzed_at')
+        if last_analyzed:
+            if isinstance(last_analyzed, str):
+                last_analyzed = datetime.fromisoformat(last_analyzed.replace('Z', '+00:00'))
+            if last_analyzed.tzinfo is None:
+                last_analyzed = last_analyzed.replace(tzinfo=timezone.utc)
+            
+            if datetime.now(timezone.utc) - last_analyzed < freshness_threshold:
+                logger.debug(f"Skipping Recheck for {listing.get('token_mint')} (Analyzed recently: {last_analyzed})")
+                continue
+
         # logger.info(f"--- Re-processing listing {i+1}/{len(skipped_listings)} ---")
         found, _ = await processor.process_listing(listing, queue, send_alert=True)
         if found:

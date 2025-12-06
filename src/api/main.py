@@ -587,14 +587,15 @@ async def sse_endpoint(request: Request):
 
 
 @app.post("/api/trigger/full-recheck")
-async def trigger_full_recheck(background_tasks: BackgroundTasks):
+async def trigger_full_recheck(request: Request):
     """
-    Triggers a full database sync and recheck in the background.
+    Triggers a full database sync and recheck.
+    Blocking call: Waits for sync to complete.
     """
     logger.info("Received request to trigger full recheck.")
-    # We pass None for the queue as the API process doesn't own the Discord bot queue
-    background_tasks.add_task(syncer.full_sync, queue=None)
-    return {"status": "accepted", "message": "Full recheck started in background."}
+    # Await the process so the frontend knows when it's done
+    await syncer.full_sync(queue=None)
+    return {"status": "success", "message": "Full recheck complete."}
 
 @app.post("/api/trigger/recheck")
 async def trigger_recheck(request: Request):
