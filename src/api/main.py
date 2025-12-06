@@ -13,7 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from database import main as db
 from sqlalchemy import desc
+from sqlalchemy import desc
 from worker.app.core import syncer
+from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -257,8 +259,52 @@ def cache_alt_data(signature_id: str, data: dict):
             session.execute(stmt)
             session.commit()
             logger.info(f"Cached Alt data for {signature_id}")
+            session.execute(stmt)
+            session.commit()
+            logger.info(f"Cached Alt data for {signature_id}")
     except Exception as e:
         logger.error(f"Error caching Alt data: {e}")
+
+# --- Settings API ---
+@app.get("/api/settings/{wallet_address}")
+def get_settings(wallet_address: str):
+    """Retrieves settings for a specific user wallet."""
+    try:
+        # Ensure user exists first
+        db.create_user(wallet_address) 
+        settings = db.get_user_settings(wallet_address)
+        if settings:
+             # Remove internal SQLAlchemy state if present (clean dict)
+             settings.pop('_sa_instance_state', None)
+             return settings
+        return {"error": "Settings not found"}
+    except Exception as e:
+        logger.error(f"Error getting settings: {e}")
+        return {"error": str(e)}
+
+class SettingsUpdate(BaseModel):
+    max_price: float | None = None
+    priority_fee: float | None = None
+    slippage: float | None = None
+    auto_buy_enabled: bool | None = None
+    rpc_endpoint: str | None = None
+    jito_tip_amount: float | None = None
+    encrypted_private_key: str | None = None
+    gold_discount_percent: int | None = None
+    red_discount_percent: int | None = None
+    blue_discount_percent: int | None = None
+    push_enabled: bool | None = None
+
+@app.post("/api/settings/{wallet_address}")
+def update_settings(wallet_address: str, settings: SettingsUpdate):
+    """Updates settings for a specific user wallet."""
+    try:
+        payload = settings.dict(exclude_unset=True)
+        db.update_user_settings(wallet_address, payload)
+        return {"status": "success", "message": "Settings updated"}
+    except Exception as e:
+        logger.error(f"Error updating settings: {e}")
+        return {"status": "error", "message": str(e)}
 
 app = FastAPI(title="Cards Cartel API")
 

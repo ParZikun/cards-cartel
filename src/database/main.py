@@ -66,6 +66,19 @@ class UserSettings(Base):
     priority_fee = Column(Float, default=0.005)
     slippage = Column(Float, default=1.0)
     auto_buy_enabled = Column(Boolean, default=False)
+    
+    # New Fields
+    rpc_endpoint = Column(String, default="https://api.mainnet-beta.solana.com")
+    jito_tip_amount = Column(Float, default=0.001)
+    encrypted_private_key = Column(String, nullable=True) # User must set this
+    
+    # Thresholds
+    gold_discount_percent = Column(Integer, default=30)
+    red_discount_percent = Column(Integer, default=20)
+    blue_discount_percent = Column(Integer, default=10)
+    
+    push_enabled = Column(Boolean, default=True)
+    
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 class AltValuation(Base):
