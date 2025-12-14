@@ -66,6 +66,7 @@ class UserSettings(Base):
     priority_fee = Column(Float, default=0.005)
     slippage = Column(Float, default=1.0)
     auto_buy_enabled = Column(Boolean, default=False)
+    priority = Column(Integer, default=10) # 1 = Highest Priority, 10 = Standard
     
     # New Fields
     rpc_endpoint = Column(String, default="https://api.mainnet-beta.solana.com")
@@ -244,7 +245,7 @@ def get_skipped_listings(since: datetime | None) -> list[dict]:
         rows = query.all()
         return [to_dict(row) for row in rows]
 
-def create_user(wallet_address: str, tier: str = 'NORMAL') -> dict:
+def create_user(wallet_address: str, tier: str = 'PENDING') -> dict:
     """
     Creates a new user if they don't exist. Returns the user dict.
     """
@@ -283,3 +284,17 @@ def update_user_settings(wallet_address: str, settings_update: dict):
     with get_session() as session:
         session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
         session.commit()
+
+def get_eligible_buyers(price_sol: float) -> list[dict]:
+    """
+    Fetches all users who have auto-buy enabled and a max_price >= listing price.
+    Results are sorted by priority (ASC) - Lower number = Higher priority.
+    """
+    with get_session() as session:
+        # Join with User table to check status? Assuming active if they have settings.
+        # Ideally check User.status == 'ACTIVE' too.
+        rows = session.query(UserSettings).filter(
+            UserSettings.auto_buy_enabled == True,
+            UserSettings.max_price >= price_sol
+        ).order_by(UserSettings.priority.asc()).all()
+        return [row.__dict__ for row in rows]

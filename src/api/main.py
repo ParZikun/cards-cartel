@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-from fastapi import FastAPI, Query, Request, BackgroundTasks
+from fastapi import FastAPI, Query, Request, BackgroundTasks, Depends, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from database import main as db
@@ -16,6 +16,10 @@ from sqlalchemy import desc
 from sqlalchemy import desc
 from worker.app.core import syncer
 from pydantic import BaseModel
+from . import auth
+from solders.pubkey import Pubkey
+from solders.keypair import Keypair
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -265,13 +269,75 @@ def cache_alt_data(signature_id: str, data: dict):
     except Exception as e:
         logger.error(f"Error caching Alt data: {e}")
 
+app = FastAPI(title="Cards Cartel API")
+
+# CORS Configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Auth Endpoints ---
+class LoginRequest(BaseModel):
+    wallet_address: str
+    message: str
+    signature: str
+
+@app.post("/api/auth/login")
+def login(request: LoginRequest):
+    """
+    Authenticates a user via Sign-In with Solana (SIWS).
+    Verifies the signature and issues a JWT access token.
+    """
+    # 1. Verify Signature
+    if not auth.verify_solana_signature(request.wallet_address, request.message, request.signature):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+    
+    # 2. Check/Create User in DB
+    user = db.get_user(request.wallet_address)
+    if not user:
+        # Auto-create user on first valid login
+        user = db.create_user(request.wallet_address, tier="NORMAL")
+    
+    # 3. Create Token
+    access_token = auth.create_access_token(data={"sub": request.wallet_address})
+    
+    return {"access_token": access_token, "token_type": "bearer", "user": user}
+
 # --- Settings API ---
-@app.get("/api/settings/{wallet_address}")
-def get_settings(wallet_address: str):
-    """Retrieves settings for a specific user wallet."""
+@app.get("/api/user/status/{wallet_address}")
+def get_user_status(wallet_address: str, current_user: str = Depends(auth.get_current_user)):
+    """Retrieves the tier/status for a specific user wallet. Protected."""
+    if current_user != wallet_address:
+         raise HTTPException(status_code=403, detail="Not authorized to view this user status")
+
     try:
-        # Ensure user exists first
-        db.create_user(wallet_address) 
+        # Strict Access Control: Do NOT create user if not exists
+        user = db.get_user(wallet_address)
+        
+        if not user:
+            # Return 404/403 equivalent structure so frontend knows to block
+            return {"tier": "UNAUTHORIZED", "status": "UNKNOWN"}
+            
+        return {"tier": user.get("tier"), "status": user.get("status")}
+    except Exception as e:
+        logger.error(f"Error getting user status: {e}")
+        return {"error": str(e)}
+
+@app.get("/api/settings/{wallet_address}")
+def get_settings(wallet_address: str, current_user: str = Depends(auth.get_current_user)):
+    """Retrieves settings for a specific user wallet. Protected."""
+    if current_user != wallet_address:
+         raise HTTPException(status_code=403, detail="Not authorized to view these settings")
+
+    try:
+        user = db.get_user(wallet_address)
+        if not user:
+             return {"error": "User not authorized"}
+
         settings = db.get_user_settings(wallet_address)
         if settings:
              # Remove internal SQLAlchemy state if present (clean dict)
@@ -296,26 +362,120 @@ class SettingsUpdate(BaseModel):
     push_enabled: bool | None = None
 
 @app.post("/api/settings/{wallet_address}")
-def update_settings(wallet_address: str, settings: SettingsUpdate):
-    """Updates settings for a specific user wallet."""
+def update_settings(wallet_address: str, settings: SettingsUpdate, current_user: str = Depends(auth.get_current_user)):
+    """Updates settings for a specific user wallet. Protected."""
+    if current_user != wallet_address:
+         raise HTTPException(status_code=403, detail="Not authorized to update these settings")
+
     try:
         payload = settings.dict(exclude_unset=True)
+        
+        # Security: Encrypt Private Key if present
+        if payload.get('encrypted_private_key'):
+            raw_key = payload['encrypted_private_key']
+            from cryptography.fernet import Fernet
+            key = os.getenv("SECRET_KEY")
+            if not key:
+                raise HTTPException(status_code=500, detail="Server misconfiguration: No SECRET_KEY")
+            f = Fernet(key)
+            encrypted = f.encrypt(raw_key.encode()).decode()
+            payload['encrypted_private_key'] = encrypted
+            
         db.update_user_settings(wallet_address, payload)
         return {"status": "success", "message": "Settings updated"}
     except Exception as e:
         logger.error(f"Error updating settings: {e}")
         return {"status": "error", "message": str(e)}
 
-app = FastAPI(title="Cards Cartel API")
 
-# CORS Configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- Manual Buy Endpoint ---
+
+TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+
+def get_associated_token_address(owner: Pubkey, mint: Pubkey) -> Pubkey:
+    return Pubkey.find_program_address(
+        [bytes(owner), bytes(TOKEN_PROGRAM_ID), bytes(mint)],
+        ASSOCIATED_TOKEN_PROGRAM_ID
+    )[0]
+
+class ManualBuyRequest(BaseModel):
+    buyer: str
+    tokenMint: str
+    price: float
+    priorityFee: float | None = None
+
+@app.post("/api/buy/create-tx")
+async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(auth.get_current_user)):
+    """
+    Creates a transaction for a Manual Buy.
+    1. Fetches live seller/owner from ME.
+    2. Derives tokenATA.
+    3. Calls ME buy_now instruction.
+    4. Returns transaction to frontend.
+    """
+    if current_user != request.buyer:
+         raise HTTPException(status_code=403, detail="Buyer must match authenticated user")
+
+    logger.info(f"Creating Buy TX for mint: {request.tokenMint} Buyer: {request.buyer} Price: {request.price}")
+
+    async with httpx.AsyncClient() as client:
+        # A. Fetch Live Token Data to get Owner (Seller)
+        try:
+            token_url = f"https://api-mainnet.magiceden.dev/v2/tokens/{request.tokenMint}"
+            resp = await client.get(token_url)
+            if resp.status_code != 200:
+                 raise HTTPException(status_code=404, detail="Token not found on Magic Eden")
+            
+            token_data = resp.json()
+            seller_address = token_data.get('owner')
+            if not seller_address:
+                raise HTTPException(status_code=400, detail="Could not determine seller address")
+        except Exception as e:
+            logger.error(f"Error fetching token info: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to fetch token info: {str(e)}")
+
+        # B. Derive Token ATA
+        try:
+            seller_pubkey = Pubkey.from_string(seller_address)
+            mint_pubkey = Pubkey.from_string(request.tokenMint)
+            token_ata = get_associated_token_address(seller_pubkey, mint_pubkey)
+        except Exception as e:
+            logger.error(f"Error deriving ATA: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to derive ATA: {str(e)}")
+
+        # C. Call Buy Now Instruction
+        try:
+            buy_url = "https://api-mainnet.magiceden.dev/v2/instructions/buy_now"
+            params = {
+                "buyer": request.buyer,
+                "seller": seller_address,
+                "tokenMint": request.tokenMint,
+                "tokenATA": str(token_ata),
+                "price": request.price,
+                "sellerExpiry": 0,
+                "buyerExpiry": 0
+            }
+            if request.priorityFee:
+                 params["priorityFee"] = request.priorityFee
+
+            headers = {
+                 "Authorization": f"Bearer {os.getenv('MAGIC_EDEN_API_KEY', '')}" 
+            }
+
+            buy_resp = await client.get(buy_url, params=params, headers=headers)
+            if buy_resp.status_code != 200:
+                logger.error(f"ME Buy Error: {buy_resp.text}")
+                raise HTTPException(status_code=buy_resp.status_code, detail=f"Magic Eden Error: {buy_resp.text}")
+            
+            return buy_resp.json()
+
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            logger.error(f"Error fetching buy instruction: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to get buy instruction: {str(e)}")
+
 
 @app.on_event("startup")
 def startup_event():

@@ -56,6 +56,24 @@ local-analyze:
 	docker-compose -f docker-compose.local.yml run --rm worker python -m scripts.update_database_listings
 	@echo "Analysis complete."
 
+migrate-local:
+	@echo "Applying migrations..."
+	@cat migrations/*.sql | docker exec -i postgres-local psql -U postgres -d cards_cartel_db
+	@echo "Migrations applied successfully."
+
+# Helper to add a user to the whitelist
+# Usage: make add-user WALLET=... TIER=...
+add-user:
+	@if [ -z "$(WALLET)" ]; then \
+		echo "Error: WALLET argument is required. Usage: make add-user WALLET=<address> [TIER=NORMAL|GOLD]"; \
+		exit 1; \
+	fi
+	docker exec -it sniper-worker-local python scripts/manage_users.py add $(WALLET) --tier $(or $(TIER),NORMAL)
+
+# Helper to list all users
+list-users:
+	docker exec -it sniper-worker-local python scripts/manage_users.py list
+
 # --- Production Environment Commands ---
 prod-migrate:
 	@echo "Building production images..."

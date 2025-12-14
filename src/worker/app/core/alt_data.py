@@ -11,18 +11,22 @@ GRAPHQL_URL = "https://alt-platform-server.production.internal.onlyalt.com/graph
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 COOKIE = os.getenv("COOKIE")
 
-if not AUTH_TOKEN or not COOKIE or not GRAPHQL_URL:
-    raise ValueError("AUTH_TOKEN and COOKIE must be set in the .env file.")
+if not AUTH_TOKEN or not COOKIE:
+    # Changed to warning so we can run locally without full ENV if needed (though it will fail fetches)
+    if os.getenv("ENVIRONMENT", "dev") != "local": 
+        logger.warning("AUTH_TOKEN and COOKIE not set. Alt data fetching will fail.")
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0',
     'Accept': '*/*',
     'Content-Type': 'application/json',
     'Referer': 'https://app.alt.xyz/',
-    'Origin': 'https://app.alt.xyz',
-    'authorization': f'Bearer {AUTH_TOKEN}',
-    'Cookie': COOKIE
+    'Origin': 'https://app.alt.xyz'
 }
+if AUTH_TOKEN:
+    HEADERS['authorization'] = f'Bearer {AUTH_TOKEN}'
+if COOKIE:
+    HEADERS['Cookie'] = COOKIE
 
 # Create a single, reusable async client
 async_client = httpx.AsyncClient(headers=HEADERS, timeout=20)
@@ -33,6 +37,10 @@ async def get_asset_id_async(cert_id: str, retries: int = 5, initial_delay: floa
     """
     Looks up an asset's internal ID using its certification number, asynchronously.
     """
+    # Quick cache check
+    if cert_id in CERT_ID_TO_ASSET_ID_CACHE:
+        return CERT_ID_TO_ASSET_ID_CACHE[cert_id]
+
     payload = {
         "operationName": "Cert",
         "variables": {"certNumber": cert_id},
@@ -51,37 +59,28 @@ async def get_asset_id_async(cert_id: str, retries: int = 5, initial_delay: floa
             
             asset = data.get('data', {}).get('cert', {}).get('asset')
             if asset and 'id' in asset:
+                CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset['id']
                 return asset['id']
             else:
                 logger.warning(f"Cert ID '{cert_id}' not found on ALT. This is not an error.")
                 return None
                 
         except httpx.RequestError as e:
-            if isinstance(e, httpx.HTTPStatusError):
-                logger.warning(
-                    f"ALT API call (get_asset_id_async) failed for cert '{cert_id}' on attempt {attempt + 1} "
-                    f"with status {e.response.status_code}: {e.response.text}"
-                )
-            else:
-                logger.warning(
-                    f"ALT API call (get_asset_id_async) failed for cert '{cert_id}' on attempt {attempt + 1}: {repr(e)}"
-                )
             if attempt < retries - 1:
                 await asyncio.sleep(delay)
                 delay *= 2
             else:
-                logger.error(f"Failed to get asset_id for cert '{cert_id}' after {retries} attempts.")
+                logger.error(f"Failed to get asset_id for cert '{cert_id}' after {retries} attempts. Error: {e}")
     return None
 
-async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: int = 5, initial_delay: float = 1.0):
+async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: int = 5, initial_delay: float = 1.0, fast_mode: bool = False):
     """
-    Main async orchestrator. Returns a dict with: alt_value, avg_price, supply, and confidence data.
+    Main async orchestrator. 
+    Args:
+        fast_mode: If True, skips fetching MarketTransactions (Price History) to speed up decision making.
     """
-    asset_id = CERT_ID_TO_ASSET_ID_CACHE.get(cert_id)
-    if not asset_id:
-        asset_id = await get_asset_id_async(cert_id)
-        if not asset_id: return None
-        CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset_id
+    asset_id = await get_asset_id_async(cert_id)
+    if not asset_id: return None
     
     details_query = """
     query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
@@ -92,40 +91,28 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
             currentConfidenceMetric
             currentErrorLowerBound
             currentErrorUpperBound
-            __typename
           }
-          __typename
         }
         cardPops {
-          ...CardPopBase
-          __typename
+          gradingCompany
+          gradeNumber
+          count
         }
-        __typename
       }
-    }
-    fragment CardPopBase on CardPop {
-      gradingCompany
-      gradeNumber
-      count
-      __typename
     }
     """
     transactions_query  = """
     query AssetMarketTransactions($id: ID!, $marketTransactionFilter: MarketTransactionFilter!) {
       asset(id: $id) {
         marketTransactions(marketTransactionFilter: $marketTransactionFilter) {
-          ...MarketTransactionBase
-          __typename
+          date
+          price
         }
-        __typename
       }
     }
-    fragment MarketTransactionBase on MarketTransaction {
-      date
-      price
-      __typename
-    }
     """
+    
+    # Payload for Valuation
     details_payload =  {
         "operationName": "AssetDetails",
         "variables": {
@@ -134,6 +121,8 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
         },
         "query": details_query
     }
+
+    # Payload for History (Only needed if NOT fast_mode)
     trans_payload = {
         "operationName": "AssetMarketTransactions",
         "variables": {
@@ -146,49 +135,53 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
     delay = initial_delay
     for attempt in range(retries):
         try:
-            # Run both GraphQL queries concurrently
-            details_response, trans_response = await asyncio.gather(
-                async_client.post(url=GRAPHQL_URL, json=details_payload),
-                async_client.post(url=GRAPHQL_URL, json=trans_payload)
-            )
+            # Conditional Parallel Fetch
+            if fast_mode:
+                # FAST MODE: Check Value ONLY
+                details_response = await async_client.post(url=GRAPHQL_URL, json=details_payload)
+                trans_response = None
+            else:
+                # FULL MODE: Get everything
+                details_response, trans_response = await asyncio.gather(
+                    async_client.post(url=GRAPHQL_URL, json=details_payload),
+                    async_client.post(url=GRAPHQL_URL, json=trans_payload)
+                )
+                trans_response.raise_for_status()
+
             details_response.raise_for_status()
-            trans_response.raise_for_status()
-
+            
             details_json = details_response.json()
-            trans_json = trans_response.json()
-
-            if not details_json or not trans_json:
-                logger.warning(f"Received empty JSON response for asset '{asset_id}'.")
-                return None
-
             details_data = details_json.get('data', {}).get('asset', {}) or {}
-            transactions = trans_json.get('data', {}).get('asset', {}).get('marketTransactions', [])
-
+            
+            # --- Extract Core Value Data ---
             alt_value_info = details_data.get('altValueInfo', {}) or {}
             confidence_data = alt_value_info.get('confidenceData', {}) or {}
+            
+            # Supply
             supply = 0
-            card_pops = details_data.get('cardPops', [])
-            for pop in card_pops:
+            for pop in details_data.get('cardPops', []):
                 if pop.get('gradingCompany') == company and str(pop.get('gradeNumber')) == f"{float(grade):.1f}":
                     supply = pop.get('count', 0)
                     break
 
+            # Calculate Avg Price (Only if we have transactions)
             avg_price = 0.0
-            if supply > 3000:
-                logger.debug("High supply detected. Using 15-day rolling average.")
-                daily_prices, fifteen_days_ago = defaultdict(list), datetime.now() - timedelta(days=15)
-                for tx in transactions:
-                    tx_date = datetime.fromisoformat(tx['date'].split('T')[0])
-                    if tx_date >= fifteen_days_ago:
-                        daily_prices[tx_date.strftime('%Y-%m-%d')].append(float(tx['price']))
-                if daily_prices:
-                    daily_averages = [sum(prices) / len(prices) for prices in daily_prices.values()]
-                    if daily_averages: avg_price = sum(daily_averages) / len(daily_averages)
-            else:
-                logger.debug("Low supply detected. Using last 4 recent sales.")
-                num_to_avg = 4
-                recent_sales = [float(tx['price']) for tx in transactions[:num_to_avg]]
-                if recent_sales: avg_price = sum(recent_sales) / len(recent_sales)
+            if trans_response:
+                trans_json = trans_response.json()
+                transactions = trans_json.get('data', {}).get('asset', {}).get('marketTransactions', [])
+                
+                if supply > 3000:
+                    daily_prices, fifteen_days_ago = defaultdict(list), datetime.now() - timedelta(days=15)
+                    for tx in transactions:
+                        tx_date = datetime.fromisoformat(tx['date'].split('T')[0])
+                        if tx_date >= fifteen_days_ago:
+                            daily_prices[tx_date.strftime('%Y-%m-%d')].append(float(tx['price']))
+                    if daily_prices:
+                        daily_averages = [sum(prices) / len(prices) for prices in daily_prices.values()]
+                        if daily_averages: avg_price = sum(daily_averages) / len(daily_averages)
+                else:
+                    recent_sales = [float(tx['price']) for tx in transactions[:4]]
+                    if recent_sales: avg_price = sum(recent_sales) / len(recent_sales)
 
             return {
                 "alt_asset_id": asset_id,
@@ -199,38 +192,19 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
                 "upper_bound": confidence_data.get('currentErrorUpperBound') or 0.0,
                 "confidence": confidence_data.get('currentConfidenceMetric') or 0.0
             }
+
         except httpx.RequestError as e:
-            if isinstance(e, httpx.HTTPStatusError):
-                logger.warning(
-                    f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1} with status {e.response.status_code}: {e.response.text}"
-                )
-            else:
-                logger.warning(f"ALT API data fetch failed for asset {asset_id} on attempt {attempt + 1}: {e}")
             if attempt < retries - 1:
                 await asyncio.sleep(delay)
                 delay *= 2
             else:
-                logger.error(f"Failed to get ALT data for asset {asset_id} after {retries} attempts.")
-    return None # Explicitly return None if all retries fail
+                logger.error(f"Failed to get ALT data after {retries} attempts.")
+    return None
 
-# --- SANITY TEST --- 
 if __name__ == "__main__":
-    async def run_test():
-        example_cert_id = "114234980"
-        example_grade = "9"
-        example_company = "PSA"
-        
-        print("--- Running Standalone Async Test ---")
-        processed_data = await get_alt_data_async(example_cert_id, example_grade, example_company)
-        
-        if processed_data:
-            print("\n--- Processed Data ---")
-            print(f"  - Asset id: {processed_data['alt_asset_id']}")
-            print(f"  - Supply (Pop Count): {processed_data['supply']}")
-            print(f"  - Alt Value: ${processed_data['alt_value']:.2f} (Confidence: {processed_data['confidence']}%)")
-            print(f"  - Value Range: ${processed_data['lower_bound']:.2f} - ${processed_data['upper_bound']:.2f}")
-            print(f"  - Calculated Avg. Price: ${processed_data['avg_price']:.2f}")
-        else:
-            print("\nCould not fetch and process ALT data for the given card.")
-
-    asyncio.run(run_test())
+    # Sanity Check
+    async def run():
+        print("Fetching Fast Mode...")
+        res = await get_alt_data_async("114234980", "9", "PSA", fast_mode=True)
+        print(f"Fast Mode Result: {res}")
+    asyncio.run(run())
