@@ -107,3 +107,12 @@ prod-analyze:
 	@echo "Running analysis of all ME and DB listings to update database..."
 	docker-compose -f docker-compose.prod.yml run --rm worker python -m scripts.update_database_listings
 	@echo "Analysis complete."
+
+migrate-prod:
+	@echo "Applying migrations to Production (Azure)..."
+	@cat migrations/*.sql | docker run --rm -i --env-file .env postgres:13 sh -c 'export PGPASSWORD=$$POSTGRES_PASSWORD; psql -h $$POSTGRES_HOST -U $$POSTGRES_USER -d $$POSTGRES_DB'
+	@echo "Migrations applied successfully."
+
+prod-restart:
+	@echo "Restarting production environment..."
+	docker-compose -f docker-compose.prod.yml restart
