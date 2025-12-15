@@ -62,11 +62,43 @@ class UserSettings(Base):
     __tablename__ = "user_settings"
 
     user_wallet = Column(String(44), primary_key=True) # Foreign key to users.wallet_address
+    min_price = Column(Float, default=0.0)
     max_price = Column(Float, default=10.0)
     priority_fee = Column(Float, default=0.005)
     slippage = Column(Float, default=1.0)
     auto_buy_enabled = Column(Boolean, default=False)
+    priority = Column(Integer, default=10) # 1 = Highest Priority, 10 = Standard
+    
+    # New Fields
+    rpc_endpoint = Column(String, default="https://api.mainnet-beta.solana.com")
+    jito_tip_amount = Column(Float, default=0.001)
+    encrypted_private_key = Column(String, nullable=True) # User must set this
+    
+    # Thresholds
+    gold_discount_percent = Column(Integer, default=30)
+    red_discount_percent = Column(Integer, default=20)
+    blue_discount_percent = Column(Integer, default=10)
+    
+    push_enabled = Column(Boolean, default=True)
+    blacklisted_keywords = Column(String, default='black star,sticker,stickers')
+    
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class AltValuation(Base):
+    __tablename__ = "alt_valuations"
+
+    # Composite unique key or just a string signature? 
+    # Using grading_id (cert number) as the primary key is risky if different companies have same cert but unlikely for our scope.
+    # Better to use a composite string or specific columns. 
+    # Let's use a "signature_id" string: "{company}_{grade}_{cert_id}" normalized.
+    signature_id = Column(String, primary_key=True) 
+    
+    alt_value = Column(Float)
+    alt_value_min = Column(Float)
+    alt_value_max = Column(Float)
+    confidence = Column(Float)
+    alt_asset_id = Column(String)
+    last_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 # --- Database Functions ---
 def init_db():
@@ -145,6 +177,12 @@ def update_listing_status(mint_address: str, is_listed: bool):
         session.commit()
         logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
 
+def to_dict(obj):
+    """Converts a SQLAlchemy model to a dictionary, excluding internal state."""
+    if not obj:
+        return None
+    return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+
 def get_active_deals_by_category(categories: list, limit: int = 25) -> list[dict]:
     """
     Fetches active deals for a given list of cartel_categories.
@@ -152,11 +190,11 @@ def get_active_deals_by_category(categories: list, limit: int = 25) -> list[dict
     if not categories:
         return []
     with get_session() as session:
-        rows = session.query(Listing.name, Listing.listing_id).filter(
+        rows = session.query(Listing).filter(
             Listing.is_listed == True,
             Listing.cartel_category.in_(categories)
         ).order_by(Listing.listed_at.desc()).limit(limit).all()
-        return [{"name": row[0], "listing_id": row[1]} for row in rows]
+        return [to_dict(row) for row in rows]
 
 def get_listing_by_id(listing_id: str) -> dict | None:
     """
@@ -164,7 +202,7 @@ def get_listing_by_id(listing_id: str) -> dict | None:
     """
     with get_session() as session:
         row = session.query(Listing).filter(Listing.listing_id == listing_id).first()
-        return row.__dict__ if row else None
+        return to_dict(row)
 
 def update_listing_details(listing_id: str, payload: dict):
     """
@@ -180,13 +218,13 @@ def get_all_active_listings() -> list[dict]:
     """Fetches all listings that are currently marked as listed."""
     with get_session() as session:
         rows = session.query(Listing).filter(Listing.is_listed == True).all()
-        return [row.__dict__ for row in rows]
+        return [to_dict(row) for row in rows]
 
 def get_listing_by_mint(mint_address: str) -> dict | None:
     """Fetches all details for a single listing by its mint address."""
     with get_session() as session:
         row = session.query(Listing).filter(Listing.token_mint == mint_address).first()
-        return row.__dict__ if row else None
+        return to_dict(row)
 
 def get_skipped_listings(since: datetime | None) -> list[dict]:
     """
@@ -207,9 +245,9 @@ def get_skipped_listings(since: datetime | None) -> list[dict]:
         if since:
             query = query.filter(Listing.last_analyzed_at >= since)
         rows = query.all()
-        return [row.__dict__ for row in rows]
+        return [to_dict(row) for row in rows]
 
-def create_user(wallet_address: str, tier: str = 'NORMAL') -> dict:
+def create_user(wallet_address: str, tier: str = 'PENDING') -> dict:
     """
     Creates a new user if they don't exist. Returns the user dict.
     """
@@ -219,11 +257,12 @@ def create_user(wallet_address: str, tier: str = 'NORMAL') -> dict:
             user = User(wallet_address=wallet_address, tier=tier)
             session.add(user)
             # Create default settings for the user
-            settings = UserSettings(user_wallet=wallet_address)
+            default_rpc = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+            settings = UserSettings(user_wallet=wallet_address, rpc_endpoint=default_rpc)
             session.add(settings)
             session.commit()
             logger.info(f"Created new user: {wallet_address} ({tier})")
-        return user.__dict__
+        return to_dict(user)
 
 def get_user(wallet_address: str) -> dict | None:
     """
@@ -231,7 +270,7 @@ def get_user(wallet_address: str) -> dict | None:
     """
     with get_session() as session:
         user = session.query(User).filter(User.wallet_address == wallet_address).first()
-        return user.__dict__ if user else None
+        return to_dict(user)
 
 def get_user_settings(wallet_address: str) -> dict | None:
     """
@@ -248,3 +287,30 @@ def update_user_settings(wallet_address: str, settings_update: dict):
     with get_session() as session:
         session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
         session.commit()
+
+def get_global_blacklist() -> list[str]:
+    """
+    Fetches the blacklist from the first available user settings (assumes single tenant or shared config).
+    Returns a list of lowercase keywords.
+    """
+    with get_session() as session:
+        # Get the first settings row found
+        settings = session.query(UserSettings).first()
+        if settings and settings.blacklisted_keywords:
+            return [k.strip().lower() for k in settings.blacklisted_keywords.split(',') if k.strip()]
+        return ['black star', 'sticker', 'stickers'] # Default fallback
+
+def get_eligible_buyers(price_sol: float) -> list[dict]:
+    """
+    Fetches all users who have auto-buy enabled and a max_price >= listing price.
+    Results are sorted by priority (ASC) - Lower number = Higher priority.
+    """
+    with get_session() as session:
+        # Join with User table to check status? Assuming active if they have settings.
+        # Ideally check User.status == 'ACTIVE' too.
+        rows = session.query(UserSettings).filter(
+            UserSettings.auto_buy_enabled == True,
+            UserSettings.max_price >= price_sol,
+            UserSettings.min_price <= price_sol
+        ).order_by(UserSettings.priority.asc()).all()
+        return [row.__dict__ for row in rows]

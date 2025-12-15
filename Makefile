@@ -13,6 +13,7 @@ help:
 	@echo "  local-down      - Stop local services."
 	@echo "  local-logs      - View logs for local services."
 	@echo "  local-clean     - Stop local services and remove all associated volumes (deletes DB data)."
+	@echo "  local-restart   - Restart local services."
 	@echo ""
 	@echo "Production Environment Targets:"
 	@echo "  prod-migrate    - Build images and run the database migration for production."
@@ -33,11 +34,11 @@ local-migrate:
 	done;
 	python -m scripts.migrate_prod_to_postgres
 	@echo "Starting remaining services..."
-	docker-compose -f docker-compose.local.yml up --build -d worker
+	docker-compose -f docker-compose.local.yml up --build -d worker api
 
 local-up:
 	@echo "Starting local environment with postgres and worker..."
-	docker-compose -f docker-compose.local.yml up --build -d postgres worker
+	docker-compose -f docker-compose.local.yml up --build -d postgres worker api
 
 local-down:
 	@echo "Stopping local environment..."
@@ -55,6 +56,28 @@ local-analyze:
 	@echo "Running analysis of all ME and DB listings to update database..."
 	docker-compose -f docker-compose.local.yml run --rm worker python -m scripts.update_database_listings
 	@echo "Analysis complete."
+
+migrate-local:
+	@echo "Applying migrations..."
+	@cat migrations/*.sql | docker exec -i postgres-local psql -U postgres -d cards_cartel_db
+	@echo "Migrations applied successfully."
+
+local-restart:
+	@echo "Restarting local environment..."
+	docker-compose -f docker-compose.local.yml restart
+
+# Helper to add a user to the whitelist
+# Usage: make add-user WALLET=... TIER=...
+add-user:
+	@if [ -z "$(WALLET)" ]; then \
+		echo "Error: WALLET argument is required. Usage: make add-user WALLET=<address> [TIER=NORMAL|GOLD]"; \
+		exit 1; \
+	fi
+	docker exec -it sniper-worker-local python scripts/manage_users.py add $(WALLET) --tier $(or $(TIER),NORMAL)
+
+# Helper to list all users
+list-users:
+	docker exec -it sniper-worker-local python scripts/manage_users.py list
 
 # --- Production Environment Commands ---
 prod-migrate:
