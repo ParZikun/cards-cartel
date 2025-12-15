@@ -39,6 +39,8 @@ def add_user(wallet, tier="NORMAL"):
         if check:
             logger.info(f"User {wallet} already exists. Updating tier to {tier}...")
             conn.execute(text("UPDATE users SET tier = :t, status = 'ACTIVE' WHERE wallet_address = :w"), {"t": tier, "w": wallet})
+            # Ensure Settings exist (in case they were deleted or missed)
+            conn.execute(text("INSERT INTO user_settings (user_wallet) VALUES (:w) ON CONFLICT DO NOTHING"), {"w": wallet})
         else:
             logger.info(f"Adding new user {wallet} as {tier}...")
             # Create User
