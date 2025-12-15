@@ -282,10 +282,16 @@ def get_user_settings(wallet_address: str) -> dict | None:
 
 def update_user_settings(wallet_address: str, settings_update: dict):
     """
-    Updates the settings for a user.
+    Updates the settings for a user. Upserts if row missing.
     """
     with get_session() as session:
-        session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
+        # PostgreSQL Upsert
+        stmt = insert(UserSettings).values(user_wallet=wallet_address, **settings_update)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['user_wallet'],
+            set_=settings_update
+        )
+        session.execute(stmt)
         session.commit()
 
 def get_global_blacklist() -> list[str]:
