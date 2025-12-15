@@ -61,6 +61,7 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
             async with ALT_API_SEMAPHORE:
                 processed_alt_data = await alt.get_alt_data_async(
                     listing['grading_id'], 
+                    listing.get('grade_num', 10),
                     listing['grading_company'],
                     fast_mode=fast_mode 
                 )

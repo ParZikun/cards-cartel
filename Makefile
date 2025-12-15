@@ -89,7 +89,7 @@ prod-migrate:
 
 prod-up:
 	@echo "Starting production environment..."
-	docker-compose -f docker-compose.prod.yml up -d
+	docker-compose -f docker-compose.prod.yml up --build -d
 
 prod-down:
 	@echo "Stopping production environment..."
