@@ -62,6 +62,7 @@ class UserSettings(Base):
     __tablename__ = "user_settings"
 
     user_wallet = Column(String(44), primary_key=True) # Foreign key to users.wallet_address
+    min_price = Column(Float, default=0.0)
     max_price = Column(Float, default=10.0)
     priority_fee = Column(Float, default=0.005)
     slippage = Column(Float, default=1.0)
@@ -79,6 +80,7 @@ class UserSettings(Base):
     blue_discount_percent = Column(Integer, default=10)
     
     push_enabled = Column(Boolean, default=True)
+    blacklisted_keywords = Column(String, default='black star,sticker,stickers')
     
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -255,7 +257,8 @@ def create_user(wallet_address: str, tier: str = 'PENDING') -> dict:
             user = User(wallet_address=wallet_address, tier=tier)
             session.add(user)
             # Create default settings for the user
-            settings = UserSettings(user_wallet=wallet_address)
+            default_rpc = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+            settings = UserSettings(user_wallet=wallet_address, rpc_endpoint=default_rpc)
             session.add(settings)
             session.commit()
             logger.info(f"Created new user: {wallet_address} ({tier})")
@@ -283,7 +286,20 @@ def update_user_settings(wallet_address: str, settings_update: dict):
     """
     with get_session() as session:
         session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
+        session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
         session.commit()
+
+def get_global_blacklist() -> list[str]:
+    """
+    Fetches the blacklist from the first available user settings (assumes single tenant or shared config).
+    Returns a list of lowercase keywords.
+    """
+    with get_session() as session:
+        # Get the first settings row found
+        settings = session.query(UserSettings).first()
+        if settings and settings.blacklisted_keywords:
+            return [k.strip().lower() for k in settings.blacklisted_keywords.split(',') if k.strip()]
+        return ['black star', 'sticker', 'stickers'] # Default fallback
 
 def get_eligible_buyers(price_sol: float) -> list[dict]:
     """
@@ -295,6 +311,7 @@ def get_eligible_buyers(price_sol: float) -> list[dict]:
         # Ideally check User.status == 'ACTIVE' too.
         rows = session.query(UserSettings).filter(
             UserSettings.auto_buy_enabled == True,
-            UserSettings.max_price >= price_sol
+            UserSettings.max_price >= price_sol,
+            UserSettings.min_price <= price_sol
         ).order_by(UserSettings.priority.asc()).all()
         return [row.__dict__ for row in rows]

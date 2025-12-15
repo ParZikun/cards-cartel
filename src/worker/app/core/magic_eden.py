@@ -7,16 +7,8 @@ import re
 # Initialize a logger for this module
 logger = logging.getLogger(__name__)
 
-# This list can be expanded as needed
-BLACKLISTED_KEYWORDS = ['black star', 'sticker', 'stickers']
-
-# Mimic a real browser request to ensure API access
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Origin': 'https://magiceden.io',
-    'Referer': 'https://magiceden.io/'
-}
+# Default fallback if not passed (though we aim to pass it)
+DEFAULT_BLACKLIST = ['black star', 'sticker', 'stickers']
 
 # Create a single, reusable async client
 async_client = httpx.AsyncClient(headers=HEADERS, timeout=20)
@@ -29,7 +21,7 @@ def _get_attribute_value(attributes_list: list, target_trait: str):
             return attribute.get('value')
     return None
 
-def _process_listing(listing: dict):
+def _process_listing(listing: dict, blacklisted_keywords: list[str] = None):
     """
     Processes a single raw listing from the /idxv2/ API.
     Returns the processed dictionary or None if it's invalid.
@@ -37,7 +29,11 @@ def _process_listing(listing: dict):
     if not listing: return None
 
     name = listing.get('content', "Unknown")
-    for keyword in BLACKLISTED_KEYWORDS:
+    
+    # Use passed list or default
+    blacklist = blacklisted_keywords if blacklisted_keywords is not None else DEFAULT_BLACKLIST
+    
+    for keyword in blacklist:
         if keyword in name.lower():
             logger.debug(f"Skipping blacklisted card: {name}")
             return None
@@ -128,7 +124,7 @@ async def _fetch_with_retries_async(url: str, params: dict, retries: int = 5, in
                 logger.critical("ME API fetch failed after multiple retries. The service may be down.")
     return []
 
-async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
+async def _fetch_listings_async(processed_ids: set | None, limit: int = 100, blacklisted_keywords: list[str] = None):
     """Unified async fetch function for the new API."""
     base_url = "https://api-mainnet.magiceden.us/idxv2/getListedNftsByCollectionSymbol"
     
@@ -164,7 +160,7 @@ async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
         
         if processed_ids is not None:
             if listing_id and listing_id not in processed_ids:
-                processed = _process_listing(listing)
+                processed = _process_listing(listing, blacklisted_keywords)
                 if processed:
                     new_listings.append(processed)
                     new_found_count += 1
@@ -173,7 +169,7 @@ async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
                 processed_ids.add(listing_id)
         else:
             # This branch is for initial population, where we don't have processed_ids
-            processed = _process_listing(listing)
+            processed = _process_listing(listing, blacklisted_keywords)
             if processed:
                 new_listings.append(processed)
 
@@ -182,20 +178,20 @@ async def _fetch_listings_async(processed_ids: set | None, limit: int = 100):
                 
     return new_listings, new_found_count
 
-async def fetch_initial_listings_async(limit: int = 100):
+async def fetch_initial_listings_async(limit: int = 100, blacklisted_keywords: list[str] = None):
     """Fetches a specific number of recent listings for initial DB population, asynchronously."""
     logger.info(f"Fetching latest {limit} listings to populate database...")
-    initial_listings, _ = await _fetch_listings_async(None, limit=limit)
+    initial_listings, _ = await _fetch_listings_async(None, limit=limit, blacklisted_keywords=blacklisted_keywords)
     processed_ids = {listing['listing_id'] for listing in initial_listings if listing and listing.get('listing_id')}
     return initial_listings, processed_ids
 
-async def fetch_new_listings_async(processed_ids: set):
+async def fetch_new_listings_async(processed_ids: set, blacklisted_keywords: list[str] = None):
     """Fetches the most recent listings asynchronously and filters out any already processed."""
-    new_listings, _ = await _fetch_listings_async(processed_ids=processed_ids, limit=100)
+    new_listings, _ = await _fetch_listings_async(processed_ids=processed_ids, limit=100, blacklisted_keywords=blacklisted_keywords)
     return new_listings
 
 
-async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector_crypt'):
+async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector_crypt', blacklisted_keywords: list[str] = None):
     """
     Fetches all listings for a given collection from Magic Eden's idxv2 API using pagination,
     with server-side filtering similar to other functions in this module.
@@ -253,7 +249,7 @@ async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector
             logger.info(f"Received {len(raw_listings)} raw listings from page {page_count}.")
 
             for listing in raw_listings:
-                processed = _process_listing(listing)
+                processed = _process_listing(listing, blacklisted_keywords)
                 if processed:
                     all_listings.append(processed)
             

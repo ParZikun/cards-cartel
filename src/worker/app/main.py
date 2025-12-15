@@ -170,7 +170,8 @@ async def initial_population(queue: asyncio.PriorityQueue):
     """
     logger.info("Database is empty. Starting full, slow population...")
     
-    all_listings, _ = await me.fetch_initial_listings_async()
+    blacklist = database.get_global_blacklist()
+    all_listings, _ = await me.fetch_initial_listings_async(blacklisted_keywords=blacklist)
     if not all_listings:
         logger.warning("Initial fetch returned no listings.")
         return
@@ -200,7 +201,8 @@ async def watchdog(queue: asyncio.PriorityQueue):
         try:
             start_time = time.time()
             # Fetch new listings
-            new_listings = await me.fetch_new_listings_async(processed_ids)
+            blacklist = database.get_global_blacklist()
+            new_listings = await me.fetch_new_listings_async(processed_ids, blacklisted_keywords=blacklist)
             
             if new_listings:
                 logger.info(f"Watchdog found {len(new_listings)} new items! Queuing at Priority 0.")

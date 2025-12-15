@@ -8,6 +8,16 @@ from solana.rpc.async_api import AsyncClient
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solders.message import to_bytes_versioned
+from solders.pubkey import Pubkey
+
+TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+
+def get_associated_token_address(owner: Pubkey, mint: Pubkey) -> Pubkey:
+    return Pubkey.find_program_address(
+        [bytes(owner), bytes(TOKEN_PROGRAM_ID), bytes(mint)],
+        ASSOCIATED_TOKEN_PROGRAM_ID
+    )[0]
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +84,17 @@ async def execute_buy(user_wallet: str, encrypted_private_key: str, listing: dic
         if not all([token_mint, price, seller]):
             logger.error(f"Missing required listing info for buy: Mint={token_mint}, Price={price}, Seller={seller}")
             return False
+
+        # Derive Token ATA if missing
+        if not token_ata:
+            try:
+                seller_pubkey = Pubkey.from_string(seller)
+                mint_pubkey = Pubkey.from_string(token_mint)
+                token_ata = str(get_associated_token_address(seller_pubkey, mint_pubkey))
+                logger.debug(f"Derived Token ATA: {token_ata}")
+            except Exception as e:
+                logger.error(f"Failed to derive Token ATA: {e}")
+                return False
 
         params = {
             "buyer": str(keypair.pubkey()),

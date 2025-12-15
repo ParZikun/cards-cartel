@@ -340,8 +340,18 @@ def get_settings(wallet_address: str, current_user: str = Depends(auth.get_curre
 
         settings = db.get_user_settings(wallet_address)
         if settings:
-             # Remove internal SQLAlchemy state if present (clean dict)
+             # Remove internal SQLAlchemy state
              settings.pop('_sa_instance_state', None)
+             
+             # Dynamic RPC Override: If user has default public node, but server has a Premium RPC in env, prefer Env.
+             # This ensures existing users get the benefit of the server-side QuickNode without manual update.
+             current_rpc = settings.get('rpc_endpoint')
+             server_rpc = os.getenv("RPC_URL")
+             public_rpc = "https://api.mainnet-beta.solana.com"
+             
+             if server_rpc and (current_rpc == public_rpc or not current_rpc):
+                 settings['rpc_endpoint'] = server_rpc
+                 
              return settings
         return {"error": "Settings not found"}
     except Exception as e:
@@ -349,6 +359,7 @@ def get_settings(wallet_address: str, current_user: str = Depends(auth.get_curre
         return {"error": str(e)}
 
 class SettingsUpdate(BaseModel):
+    min_price: float | None = None
     max_price: float | None = None
     priority_fee: float | None = None
     slippage: float | None = None
@@ -360,6 +371,7 @@ class SettingsUpdate(BaseModel):
     red_discount_percent: int | None = None
     blue_discount_percent: int | None = None
     push_enabled: bool | None = None
+    blacklisted_keywords: str | None = None
 
 @app.post("/api/settings/{wallet_address}")
 def update_settings(wallet_address: str, settings: SettingsUpdate, current_user: str = Depends(auth.get_current_user)):
@@ -568,10 +580,10 @@ async def get_wallet_holdings(
         
         headers = {"accept": "application/json"}
         
-        # Use requests for synchronous ME call
-        response = requests.get(me_url, params=params, headers=headers)
-        response.raise_for_status()
-        tokens = response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(me_url, params=params, headers=headers)
+            response.raise_for_status()
+            tokens = response.json()
         
         # 2. Prepare for Async Alt Data Fetch
         alt_data_map = {}

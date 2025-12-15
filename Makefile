@@ -13,6 +13,7 @@ help:
 	@echo "  local-down      - Stop local services."
 	@echo "  local-logs      - View logs for local services."
 	@echo "  local-clean     - Stop local services and remove all associated volumes (deletes DB data)."
+	@echo "  local-restart   - Restart local services."
 	@echo ""
 	@echo "Production Environment Targets:"
 	@echo "  prod-migrate    - Build images and run the database migration for production."
@@ -60,6 +61,10 @@ migrate-local:
 	@echo "Applying migrations..."
 	@cat migrations/*.sql | docker exec -i postgres-local psql -U postgres -d cards_cartel_db
 	@echo "Migrations applied successfully."
+
+local-restart:
+	@echo "Restarting local environment..."
+	docker-compose -f docker-compose.local.yml restart
 
 # Helper to add a user to the whitelist
 # Usage: make add-user WALLET=... TIER=...

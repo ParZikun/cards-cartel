@@ -22,7 +22,8 @@ async def full_sync(queue: asyncio.Queue = None):
     logger.info("--- Starting full sync with Magic Eden ---")
 
     # 1. Fetch all listings from Magic Eden
-    me_listings = await me.fetch_all_listings_paginated_async()
+    blacklist = database.get_global_blacklist()
+    me_listings = await me.fetch_all_listings_paginated_async(blacklisted_keywords=blacklist)
     me_listings_map = {listing['token_mint']: listing for listing in me_listings}
     logger.info(f"Fetched {len(me_listings_map)} unique listings from Magic Eden.")
 
