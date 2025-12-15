@@ -129,3 +129,25 @@ prod-add-user:
 # Helper to list all users (Production)
 prod-list-users:
 	docker exec -it sniper-worker-prod python scripts/manage_users.py list
+
+# --- Cloudflare Tunnel Commands ---
+prod-install-tunnel:
+	@echo "Installing Cloudflare Tunnel..."
+	curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+	sudo dpkg -i cloudflared.deb
+	rm cloudflared.deb
+	@echo "Installation complete."
+
+prod-start-tunnel:
+	@echo "Starting Cloudflare Tunnel in background..."
+	nohup cloudflared tunnel --url http://localhost:8000 > tunnel.log 2>&1 &
+	@echo "Tunnel started. Run 'make prod-show-tunnel' to see the URL."
+
+prod-show-tunnel:
+	@echo "Cloudflare Tunnel URL:"
+	@cat tunnel.log | grep trycloudflare.com || echo "Tunnel log not found or URL not yet generated."
+
+prod-stop-tunnel:
+	@echo "Stopping Cloudflare Tunnel..."
+	pkill -f cloudflared
+	@echo "Tunnel stopped."
