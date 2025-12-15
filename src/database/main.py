@@ -286,7 +286,6 @@ def update_user_settings(wallet_address: str, settings_update: dict):
     """
     with get_session() as session:
         session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
-        session.query(UserSettings).filter(UserSettings.user_wallet == wallet_address).update(settings_update)
         session.commit()
 
 def get_global_blacklist() -> list[str]:

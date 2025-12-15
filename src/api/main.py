@@ -13,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from database import main as db
 from sqlalchemy import desc
-from sqlalchemy import desc
 from worker.app.core import syncer
 from pydantic import BaseModel
 from . import auth
@@ -793,7 +792,7 @@ async def sse_endpoint(request: Request):
                 if deals:
                     yield {
                         "event": "update",
-                        "data": json.dumps(deals)
+                        "data": json.dumps(deals, default=str)
                     }
                 
                 await asyncio.sleep(5)
@@ -947,7 +946,7 @@ async def inspect_card(query: str = Query(..., description="Mint Address or Grad
                     
                     # C. Process (Enrich with Alt Data + Update DB)
                     # Note: process_listing saves to DB!
-                    await processor.process_listing(listing_input, queue=None, send_alert=False)
+                    await processor.process_listing(listing_input, queue=None, send_alert=False, fast_mode=False)
                     
                     # D. Re-fetch from DB to get the full, clean object
                     with db.get_session() as session:

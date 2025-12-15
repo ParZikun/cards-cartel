@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 # Limit the bot to 10 concurrent requests to the ALT API
 ALT_API_SEMAPHORE = asyncio.Semaphore(10)
 
-async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert: bool = True) -> bool:
+async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert: bool = True, fast_mode: bool = True) -> bool:
     """
     The complete, atomic pipeline for a single listing.
     Optimized for Speed:
     1. Check Cache
-    2. Fast Alt Fetch (Valuation Only)
+    2. Fast Alt Fetch (Valuation Only) - Controlled by fast_mode param
     3. Buy Decision (Priority Execution - Lazy Loaded)
     4. Full Alt Fetch (History - for Logs/Discord)
     """
@@ -61,9 +61,8 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
             async with ALT_API_SEMAPHORE:
                 processed_alt_data = await alt.get_alt_data_async(
                     listing['grading_id'], 
-                    listing.get('grade_num', 0), 
                     listing['grading_company'],
-                    fast_mode=True 
+                    fast_mode=fast_mode 
                 )
         
         if not processed_alt_data:
