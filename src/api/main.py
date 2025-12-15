@@ -534,7 +534,7 @@ def get_all_deals(
         listings = query.offset(offset).limit(limit).all()
         
         return {
-            "data": [l.__dict__ for l in listings],
+            "data": [db.to_dict(l) for l in listings],
             "pagination": {
                 "page": page,
                 "limit": limit,
@@ -577,7 +577,10 @@ async def get_wallet_holdings(
             "attributes": json.dumps(attributes_filter)
         }
         
-        headers = {"accept": "application/json"}
+        headers = {
+            "accept": "application/json",
+            "Authorization": f"Bearer {os.getenv('MAGIC_EDEN_API_KEY', '')}"
+        }
         
         async with httpx.AsyncClient() as client:
             response = await client.get(me_url, params=params, headers=headers)
