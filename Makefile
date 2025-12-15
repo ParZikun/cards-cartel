@@ -116,16 +116,3 @@ migrate-prod:
 prod-restart:
 	@echo "Restarting production environment..."
 	docker-compose -f docker-compose.prod.yml restart
-
-# Helper to add a user to the whitelist (Production)
-# Usage: make prod-add-user WALLET=... TIER=...
-prod-add-user:
-	@if [ -z "$(WALLET)" ]; then \
-		echo "Error: WALLET argument is required. Usage: make prod-add-user WALLET=<address> [TIER=NORMAL|GOLD]"; \
-		exit 1; \
-	fi
-	docker exec -it sniper-worker-prod python scripts/manage_users.py add $(WALLET) --tier $(or $(TIER),NORMAL)
-
-# Helper to list all users (Production)
-prod-list-users:
-	docker exec -it sniper-worker-prod python scripts/manage_users.py list
