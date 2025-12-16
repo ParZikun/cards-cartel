@@ -1,0 +1,36 @@
+name: Deploy Backend to Production
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'Makefile'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/deploy-backend.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Deploy to Azure VM via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.AZURE_VM_HOST }}
+        username: ${{ secrets.AZURE_VM_USERNAME }}
+        key: ${{ secrets.AZURE_VM_SSH_KEY }}
+        script: |
+          # Navigate to project directory
+          cd ~/cards-cartel
+          
+          # Pull latest changes
+          echo "Pulling latest code..."
+          git pull origin main
+          
+          # Update .env file from Secret
+          echo "Updating .env file..."
+          echo "${{ secrets.PROD_ENV_FILE }}" > .env
+          
+          # Restart Production Services
+          echo "Restarting application..."
+          make prod-restart

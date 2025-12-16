@@ -49,7 +49,7 @@ listing_processing_queue = asyncio.PriorityQueue()
 queue_tie_breaker = itertools.count() # Global counter to break ties in PriorityQueue
 
 
-async def listing_consumer_worker(worker_id: int, listing_queue: asyncio.PriorityQueue, snipe_queue: asyncio.Queue):
+async def listing_consumer_worker(worker_id: int, listing_queue: asyncio.PriorityQueue, snipe_queue: asyncio.Queue, verification_queue: asyncio.Queue):
     """
     Consumer task that pulls listings from the queue and processes them.
     Multiple of these will run in parallel to handle high-latency Alt processing.
@@ -64,7 +64,12 @@ async def listing_consumer_worker(worker_id: int, listing_queue: asyncio.Priorit
             # NOTE: fast_mode will be enabled inside processor based on context or we update processor to handle it.
             # ideally processor decides.
             
-            await processor.process_listing(listing, snipe_queue, send_alert=True)
+            found_deal, category = await processor.process_listing(listing, snipe_queue, send_alert=True)
+            
+            # CRITICAL FIX: Add valuable finds to reaper (verification_queue) for continuous monitoring.
+            if category in ['AUTOBUY', 'GOOD', 'OK'] and listing.get('token_mint'):
+                logger.info(f"Consumer {worker_id}: Adding {listing.get('name')} ({category}) to Reaper for monitoring.")
+                await verification_queue.put(listing['token_mint'])
             
             listing_queue.task_done()
         except Exception as e:
@@ -263,7 +268,7 @@ async def main():
     num_workers = 25
     consumer_tasks = []
     for i in range(num_workers):
-        t = asyncio.create_task(listing_consumer_worker(i, listing_processing_queue, snipe_queue))
+        t = asyncio.create_task(listing_consumer_worker(i, listing_processing_queue, snipe_queue, verification_queue))
         consumer_tasks.append(t)
     
     logger.info(f"Started {num_workers} consumer workers.")
