@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from . import auth
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
+from worker.app.core import utils
+from worker.app.core import alt_data as shared_alt
 
 
 # Configure logging
@@ -470,8 +472,13 @@ async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(a
             if request.priorityFee:
                  params["priorityFee"] = request.priorityFee
 
+            api_key = os.getenv('ME_API_KEY', '').strip()
+            if not api_key:
+                 logger.error("ME_API_KEY is missing or empty.")
+                 raise HTTPException(status_code=500, detail="Server Configuration Error: Missing Magic Eden API Key")
+
             headers = {
-                 "Authorization": f"Bearer {os.getenv('MAGIC_EDEN_API_KEY', '')}" 
+                 "Authorization": f"Bearer {api_key}" 
             }
 
             buy_resp = await client.get(buy_url, params=params, headers=headers)
@@ -501,11 +508,18 @@ def read_root():
     return {"status": "online", "service": "Cards Cartel API"}
 
 @app.get("/api/get-all-deals")
-def get_all_deals(
+async def get_all_deals(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
     sort_by: str = Query("listed_at", description="Sort field"),
-    order: str = Query("desc", description="Sort order (asc/desc)")
+    order: str = Query("desc", description="Sort order (asc/desc)"),
+    search: str | None = Query(None, description="Search by name"),
+    min_price: float | None = Query(None, description="Min Price (SOL)"),
+    max_price: float | None = Query(None, description="Max Price (SOL)"),
+    grading_company: str | None = Query(None, description="Grading Company"),
+    grade: float | None = Query(None, description="Grade Number"),
+    category: str | None = Query(None, description="Cartel Category"),
+    is_listed: bool = Query(True, description="Filter by listed status")
 ):
     """
     Get paginated listings from the database (Admin Page).
@@ -514,13 +528,37 @@ def get_all_deals(
     offset = (page - 1) * limit
     
     with db.get_session() as session:
-        query = session.query(db.Listing) # No filter, get everything
+        query = session.query(db.Listing)
         
-        # Sorting
+        # --- Filters ---
+        if is_listed is not None:
+             query = query.filter(db.Listing.is_listed == is_listed)
+             
+        if search:
+            query = query.filter(db.Listing.name.ilike(f"%{search}%"))
+            
+        if min_price is not None:
+            query = query.filter(db.Listing.price_amount >= min_price)
+            
+        if max_price is not None:
+            query = query.filter(db.Listing.price_amount <= max_price)
+            
+        if grading_company:
+            query = query.filter(db.Listing.grading_company == grading_company)
+            
+        if grade is not None:
+            query = query.filter(db.Listing.grade_num == grade)
+            
+        if category:
+            query = query.filter(db.Listing.cartel_category == category)
+        
+        # --- Sorting ---
         if sort_by == "price":
             sort_col = db.Listing.price_amount
         elif sort_by == "diff":
             sort_col = db.Listing.alt_value 
+        elif sort_by == "last_analyzed":
+            sort_col = db.Listing.last_analyzed_at
         else:
             sort_col = db.Listing.listed_at
 
@@ -533,8 +571,43 @@ def get_all_deals(
         total = query.count()
         listings = query.offset(offset).limit(limit).all()
         
+        # INJECT USD PRICES
+        results = []
+        # We process conversion asynchronously if possible, or usually we might need a gathered approach
+        # But `utils` logic handles checking cache synchronously if valid.
+        
+        # However, `utils.get_price_in_both_currencies` is async.
+        # So we need to await it.
+        # Since we are iterating, we can either:
+        # 1. Fetch price once (it's globally cached anyway) then calculate manually.
+        # 2. Call the util.
+        
+        # Let's fetch the rate once to speed up the loop.
+        sol_price_usdc = 0.0
+        try:
+             # We can cheat and trigger a fetch if needed, but `get_price_in_both_currencies` does it.
+             # Let's just use the util for the first one to prime cache, then read internal global?
+             # Or just use the util, it is fast (uses lock). 
+             pass
+        except:
+             pass
+
+        data_list = []
+        for l in listings:
+            item = db.to_dict(l)
+            # Inject USD
+            price_sol = item.get('price_amount', 0)
+            if price_sol:
+                prices = await utils.get_price_in_both_currencies(price_sol, 'SOL')
+                if prices:
+                    item['price_usd'] = prices.get('price_usdc')
+            else:
+                 item['price_usd'] = 0.0
+            
+            data_list.append(item)
+        
         return {
-            "data": [db.to_dict(l) for l in listings],
+            "data": data_list,
             "pagination": {
                 "page": page,
                 "limit": limit,
@@ -542,6 +615,37 @@ def get_all_deals(
                 "total_pages": (total + limit - 1) // limit
             }
         }
+
+@app.get("/api/listing-details/{mint}")
+async def get_listing_details_lazy(mint: str, current_user: str = Depends(auth.get_current_user)):
+    """
+    Lazy load full details for a listing, including historical transactions.
+    Calls Shared Alt Data logic with fast_mode=False.
+    """
+    try:
+        # 1. Get Listing from DB to get metadata
+        listing = db.get_listing_by_mint(mint)
+        if not listing:
+             raise HTTPException(status_code=404, detail="Listing not found in DB")
+        
+        cert_id = listing.get('grading_id')
+        grade = listing.get('grade_num')
+        company = listing.get('grading_company')
+        
+        if not all([cert_id, grade, company]):
+             raise HTTPException(status_code=400, detail="Listing missing grading info")
+             
+        # 2. Fetch Full Alt Data
+        alt_data = await shared_alt.get_alt_data_async(cert_id, str(grade), company, fast_mode=False)
+        
+        if not alt_data:
+             return {"error": "Could not fetch Alt Data"}
+             
+        return alt_data
+        
+    except Exception as e:
+        logger.error(f"Error lazy loading details for {mint}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/get-listings")
 def get_listings(limit: int = Query(50, le=100)):
