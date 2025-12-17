@@ -433,17 +433,31 @@ async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(a
     logger.info(f"Creating Buy TX for mint: {request.tokenMint} Buyer: {request.buyer} Price: {request.price}")
 
     async with httpx.AsyncClient() as client:
-        # A. Fetch Live Token Data to get Owner (Seller)
+        # A. Fetch Live Listing Data to get Owner (Seller) and Auction House
         try:
-            token_url = f"https://api-mainnet.magiceden.dev/v2/tokens/{request.tokenMint}"
-            resp = await client.get(token_url)
-            if resp.status_code != 200:
-                 raise HTTPException(status_code=404, detail="Token not found on Magic Eden")
+            # We need the listing details to get the specific auctionHouseAddress
+            listing_url = f"https://api-mainnet.magiceden.dev/v2/tokens/{request.tokenMint}/listings"
+            resp = await client.get(listing_url)
             
-            token_data = resp.json()
-            seller_address = token_data.get('owner')
+            if resp.status_code != 200:
+                 # Fallback to token info if listings fails, though less reliable for AH
+                 raise HTTPException(status_code=404, detail="Could not fetch listings from Magic Eden")
+            
+            listings_data = resp.json()
+            if not listings_data:
+                 raise HTTPException(status_code=400, detail="Item is not currently listed")
+            
+            # Use the first active listing
+            target_listing = listings_data[0]
+            
+            seller_address = target_listing.get('seller')
+            auction_house = target_listing.get('auctionHouse')
+
             if not seller_address:
                 raise HTTPException(status_code=400, detail="Could not determine seller address")
+                
+        except HTTPException as he:
+            raise he
         except Exception as e:
             logger.error(f"Error fetching token info: {e}")
             raise HTTPException(status_code=502, detail=f"Failed to fetch token info: {str(e)}")
@@ -469,6 +483,9 @@ async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(a
                 "sellerExpiry": 0,
                 "buyerExpiry": 0
             }
+            if auction_house:
+                params['auctionHouseAddress'] = auction_house
+
             if request.priorityFee:
                  params["priorityFee"] = request.priorityFee
 
