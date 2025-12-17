@@ -462,14 +462,8 @@ async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(a
             logger.error(f"Error fetching token info: {e}")
             raise HTTPException(status_code=502, detail=f"Failed to fetch token info: {str(e)}")
 
-        # B. Derive Token ATA
-        try:
-            seller_pubkey = Pubkey.from_string(seller_address)
-            mint_pubkey = Pubkey.from_string(request.tokenMint)
-            token_ata = get_associated_token_address(seller_pubkey, mint_pubkey)
-        except Exception as e:
-            logger.error(f"Error deriving ATA: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to derive ATA: {str(e)}")
+        # B. (Skipped) Derive Token ATA - Magic Eden can often handle this, and user suggests simplifying.
+        # token_ata = get_associated_token_address(seller_pubkey, mint_pubkey)
 
         # C. Call Buy Now Instruction
         try:
@@ -478,13 +472,15 @@ async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(a
                 "buyer": request.buyer,
                 "seller": seller_address,
                 "tokenMint": request.tokenMint,
-                "tokenATA": str(token_ata),
+                # "tokenATA": str(token_ata), # Removed to simplify
                 "price": request.price,
-                "sellerExpiry": 0,
-                "buyerExpiry": 0
+                # "sellerExpiry": 0, # Removed
+                # "buyerExpiry": 0   # Removed
             }
             if auction_house:
                 params['auctionHouseAddress'] = auction_house
+            
+            logger.info(f"ME Buy Params: {params}") # Log the params for debugging
 
             if request.priorityFee:
                  params["priorityFee"] = request.priorityFee
@@ -501,7 +497,9 @@ async def create_buy_tx(request: ManualBuyRequest, current_user: str = Depends(a
             buy_resp = await client.get(buy_url, params=params, headers=headers)
             if buy_resp.status_code != 200:
                 logger.error(f"ME Buy Error: {buy_resp.text}")
-                raise HTTPException(status_code=buy_resp.status_code, detail=f"Magic Eden Error: {buy_resp.text}")
+                # Pass through the exact error from ME for visibility
+                error_detail = buy_resp.json() if buy_resp.status_code == 400 else buy_resp.text
+                raise HTTPException(status_code=buy_resp.status_code, detail=f"Magic Eden Error: {error_detail}")
             
             return buy_resp.json()
 
