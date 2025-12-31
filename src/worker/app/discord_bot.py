@@ -26,6 +26,14 @@ ROLE_ID = int(os.getenv("DISCORD_ROLE_ID", 0))
 if not BOT_TOKEN or not CHANNEL_ID or not ROLE_ID:
     raise ValueError("DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID, and DISCORD_ROLE_ID must be set in the .env file.")
 
+# Parse Admin IDs for Broadcasts
+DISCORD_DM_USER_IDS = os.getenv("DISCORD_DM_USER_IDS", "")
+ADMIN_IDS = [int(uid.strip()) for uid in DISCORD_DM_USER_IDS.split(",") if uid.strip().isdigit()]
+if ADMIN_IDS: 
+    logger.info(f"Loaded {len(ADMIN_IDS)} Admin IDs for DM broadcasts.")
+else:
+    logger.warning("No DISCORD_DM_USER_IDS found in .env. Admin DMs disabled.")
+
 # --- Helper function to reconstruct embed data ---
 async def _reconstruct_embed_data(deal_data: dict):
     """
@@ -128,7 +136,27 @@ class CartelBot(commands.Bot):
             logging.critical("❌ FATAL ERROR: Snipe consumer could not find a messageable channel with ID %s.", CHANNEL_ID)
             return
         channel_name = getattr(channel, "name", str(CHANNEL_ID))
+        channel_name = getattr(channel, "name", str(CHANNEL_ID))
         logging.info(f"Snipe consumer ready to post in #{channel_name}.")
+        
+        # --- Startup Notification ---
+        startup_channel = channel
+        log_channel_id = os.getenv('LOG_CHANNEL_ID')
+        if log_channel_id:
+            try:
+                found_log_channel = self.get_channel(int(log_channel_id))
+                if found_log_channel:
+                    startup_channel = found_log_channel
+            except:
+                pass
+
+        try:
+            if os.getenv("DRY_RUN", "false").lower() == "true":
+                 await startup_channel.send("🛡️ **Sniper Bot Online (DRY RUN MODE)**\nValidating connections... all systems go!")
+            else:
+                 await startup_channel.send("🟢 **Sniper Bot Online (LIVE TRADING)**\nGood luck!")
+        except Exception:
+            logging.error("Failed to send startup message.")
 
         while True:
             try:
@@ -148,12 +176,88 @@ class CartelBot(commands.Bot):
                 duration = snipe_data.get('duration', 0.0)
 
                 embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration)
-                ping_message = f"<@&{ROLE_ID}>" if alert_level.upper() != 'INFO' else ""
+                target_discord_id = snipe_data.get('target_discord_id')
+                broadcast_admins = snipe_data.get('broadcast_admins', False)
                 
-                # Cast to Messageable to satisfy static type-checkers after the runtime check above
-                messageable = cast(discord.abc.Messageable, channel)
-                await messageable.send(content=ping_message, embed=embed)
-                logging.info(f"-> Sent {alert_level} alert to Discord for: {listing_data['name']}")
+                # --- 1. Target User DM (e.g. Autobuy Winner) ---
+                if target_discord_id:
+                    try:
+                        user = await bot.fetch_user(int(target_discord_id))
+                        if user:
+                            # Contextual Message
+                            msg_prefix = "🎉 **You successfully sniped a card!**" if alert_level == 'AUTOBUY' else "🔔 **Private Alert:**"
+                            await user.send(content=msg_prefix, embed=embed)
+                            logging.info(f"-> Sent User DM to {user.name} for: {listing_data['name']}")
+                    except Exception as e:
+                        logging.error(f"Failed to send DM to target user {target_discord_id}: {e}")
+
+                # --- 2. Admin Broadcast (Red/Gold/Autobuy) ---
+                if broadcast_admins and ADMIN_IDS:
+                    for admin_id in ADMIN_IDS:
+                        # Avoid double DM if Admin is also the Buyer
+                        if str(admin_id) == str(target_discord_id):
+                            continue
+                            
+                        try:
+                            # Using fetch_user can be rate limited if many, but for a few admins it's fine.
+                            # Better to cache users, but fetch_user caches too.
+                            admin_user = await bot.fetch_user(admin_id)
+                            if admin_user:
+                                await admin_user.send(content=f"🚨 **Admin Broadcast ({alert_level})**", embed=embed)
+                        except Exception as e:
+                            logging.warning(f"Failed to DM Admin {admin_id}: {e}")
+
+                # --- 3. Channel Notification Logic ---
+                ping_message = ""
+                channel_to_use = channel
+                
+                # Support for separate Log Channel
+                if alert_level == 'LOG':
+                    log_channel_id = os.getenv('LOG_CHANNEL_ID')
+                    if log_channel_id:
+                         try:
+                             log_channel = self.get_channel(int(log_channel_id))
+                             if log_channel:
+                                 channel_to_use = log_channel
+                         except Exception:
+                             pass
+                    ping_message = ""
+                    
+                # Support for Verbose Card Logs (Trace)
+                elif alert_level == 'TRACE':
+                    trace_channel_id = os.getenv('LIVE_CARD_LOGS_CHANNEL_ID')
+                    if trace_channel_id:
+                         try:
+                             trace_channel = self.get_channel(int(trace_channel_id))
+                             if trace_channel:
+                                 channel_to_use = trace_channel
+                         except Exception:
+                             pass
+                    # If TRACE but no channel, strictly do not send (spam prevention)
+                    else:
+                        return 
+
+                    ping_message = ""
+                
+                elif alert_level in ['AUTOBUY', 'GOLD', 'HIGH', 'SUSPICIOUS', 'RISK']:
+                     ping_message = f"<@&{ROLE_ID}>" 
+                
+                if alert_level == 'LOG':
+                     # Simple log format
+                     reason = snipe_data.get('reason', 'No reason provided')
+                     await channel_to_use.send(f"ℹ️ **System Log**: {reason}")
+                elif alert_level == 'TRACE':
+                     # Detailed card trace
+                     reason = snipe_data.get('reason', 'Processed')
+                     # listing_data might be partial if it was rejected early, need to be careful
+                     name = listing_data.get('name', 'Unknown')
+                     price = listing_data.get('price_amount', 0)
+                     await channel_to_use.send(f"🔍 **Card Trace**: {name} | {price} SOL\nSTATUS: {reason}")
+                else:
+                     messageable = cast(discord.abc.Messageable, channel_to_use)
+                     await messageable.send(content=ping_message, embed=embed)
+                     
+                logging.info(f"-> Sent {alert_level} notification to Channel for: {listing_data['name']}")
 
             except discord.errors.Forbidden as e:
                 logging.error(f"PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}. Check bot permissions. Error: {e}")
@@ -237,7 +341,7 @@ async def start_discord_bot(queue: asyncio.Queue, recheck_skipped_callback: Call
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="cartel_recheck", description="Admin: Re-analyzes listings that were previously skipped.")
-    @app_commands.checks.has_role(ROLE_ID)
+    # @app_commands.checks.has_role(ROLE_ID) # REMOVED PER USER REQUEST
     @app_commands.describe(timeframe="Re-check listings from this period that were marked 'SKIP'")
     @app_commands.choices(timeframe=[
         app_commands.Choice(name="Last 1 Hour", value="1H"),

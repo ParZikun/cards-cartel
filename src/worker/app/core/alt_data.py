@@ -39,6 +39,7 @@ async def get_asset_id_async(cert_id: str, retries: int = 5, initial_delay: floa
     """
     # Quick cache check
     if cert_id in CERT_ID_TO_ASSET_ID_CACHE:
+        logger.debug(f"ℹ️ [Alt] Asset ID Cache Hit: {cert_id}")
         return CERT_ID_TO_ASSET_ID_CACHE[cert_id]
 
     payload = {
@@ -55,15 +56,15 @@ async def get_asset_id_async(cert_id: str, retries: int = 5, initial_delay: floa
 
             if not data:
                 logger.warning(f"Received empty JSON response for cert '{cert_id}'. Assuming not found.")
-                return None
+                return None, None
             
             asset = data.get('data', {}).get('cert', {}).get('asset')
-            if asset and 'id' in asset:
-                CERT_ID_TO_ASSET_ID_CACHE[cert_id] = asset['id']
-                return asset['id']
+            if asset and 'id' in asset and 'name' in asset:
+                CERT_ID_TO_ASSET_ID_CACHE[cert_id] = (asset['id'], asset['name'])
+                return asset['id'], asset['name']
             else:
                 logger.warning(f"Cert ID '{cert_id}' not found on ALT. This is not an error.")
-                return None
+                return None, None
                 
         except httpx.RequestError as e:
             if attempt < retries - 1:
@@ -79,7 +80,8 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
     Args:
         fast_mode: If True, skips fetching MarketTransactions (Price History) to speed up decision making.
     """
-    asset_id = await get_asset_id_async(cert_id)
+    logger.info(f"🔍 [Alt] Fetching data for Cert: {cert_id} (Fast: {fast_mode})")
+    asset_id, asset_name = await get_asset_id_async(cert_id)
     if not asset_id: return None
     
     details_query = """
@@ -185,6 +187,7 @@ async def get_alt_data_async(cert_id: str, grade: str, company: str, retries: in
 
             return {
                 "alt_asset_id": asset_id,
+                "alt_name": asset_name,
                 "alt_value": alt_value_info.get('currentAltValue') or 0.0,
                 "avg_price": avg_price,
                 "supply": supply,

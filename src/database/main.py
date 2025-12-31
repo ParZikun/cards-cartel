@@ -47,6 +47,12 @@ class Listing(Base):
     alt_value_confidence = Column(Float)
     cartel_category = Column(String, nullable=False, default='NEW')
     is_listed = Column(Boolean, default=True)
+    
+    # Transaction Details (ME V2)
+    auction_house = Column(String, nullable=True)
+    seller_referral = Column(String, nullable=True)
+    expiry = Column(Integer, nullable=True)
+
     last_analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class User(Base):
@@ -74,7 +80,7 @@ class UserSettings(Base):
     jito_tip_amount = Column(Float, default=0.001)
     encrypted_private_key = Column(String, nullable=True) # User must set this
     
-    # Thresholds
+    # Thresholds (RESERVED FOR V2 - Currently Hardcoded in processor.py)
     gold_discount_percent = Column(Integer, default=30)
     red_discount_percent = Column(Integer, default=20)
     blue_discount_percent = Column(Integer, default=10)
@@ -82,7 +88,22 @@ class UserSettings(Base):
     push_enabled = Column(Boolean, default=True)
     blacklisted_keywords = Column(String, default='black star,sticker,stickers')
     
+    # Discord Integration
+    discord_id = Column(String, nullable=True)
+
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_wallet = Column(String, nullable=True) # If None, global notification
+    title = Column(String)
+    message = Column(String)
+    type = Column(String) # 'ALERT', 'AUTOBUY', 'SYSTEM'
+    is_read = Column(Boolean, default=False)
+    params = Column(String, nullable=True) # JSON string for extra data
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class AltValuation(Base):
     __tablename__ = "alt_valuations"
@@ -91,7 +112,7 @@ class AltValuation(Base):
     # Using grading_id (cert number) as the primary key is risky if different companies have same cert but unlikely for our scope.
     # Better to use a composite string or specific columns. 
     # Let's use a "signature_id" string: "{company}_{grade}_{cert_id}" normalized.
-    signature_id = Column(String, primary_key=True) 
+    signature_id = Column(String, primary_key=True)
     
     alt_value = Column(Float)
     alt_value_min = Column(Float)
@@ -121,14 +142,15 @@ def save_listing(listings: list):
         do_nothing_stmt = insert_stmt.on_conflict_do_nothing(index_elements=['listing_id'])
         session.execute(do_nothing_stmt)
         session.commit()
+    # logger.debug(f"💾 [DB] Attempted save of {len(listings)} listings (ignoring duplicates).")
 
-def update_listing(listing_id: str, alt_data: dict, cartel_category: str):
+def update_listing(listing_id: str, alt_data: dict, cartel_category: str, name: str = None):
     """
     Updates an existing listing with its enriched ALT data and final category,
-    and updates the last_analyzed_at timestamp.
+    and updates the last_analyzed_at timestamp. Can also update name.
     """
     with get_session() as session:
-        session.query(Listing).filter(Listing.listing_id == listing_id).update({
+        update_payload = {
             "alt_asset_id": alt_data.get('alt_asset_id'),
             "alt_value": alt_data.get('alt_value'),
             "avg_price": alt_data.get('avg_price'),
@@ -138,7 +160,12 @@ def update_listing(listing_id: str, alt_data: dict, cartel_category: str):
             "alt_value_confidence": alt_data.get('confidence'),
             "cartel_category": cartel_category,
             "last_analyzed_at": func.now()
-        })
+        }
+        
+        if name:
+            update_payload['name'] = name
+
+        session.query(Listing).filter(Listing.listing_id == listing_id).update(update_payload)
         session.commit()
 
 def skip_listing(listing_id: str, cartel_category: str):
@@ -150,6 +177,7 @@ def skip_listing(listing_id: str, cartel_category: str):
             "cartel_category": cartel_category
         })
         session.commit()
+    logger.info(f"🚫 [DB] Skipped Listing: {listing_id} -> {cartel_category}")
 
 def get_unprocessed_listings() -> list[dict]:
     """Fetches all listings that have status 'NEW'."""
@@ -157,11 +185,11 @@ def get_unprocessed_listings() -> list[dict]:
         rows = session.query(Listing).filter(Listing.cartel_category == 'NEW').all()
         return [row.__dict__ for row in rows]
 
-def get_all_listing_ids() -> set:
-    """Retrieves all listing_ids from the database."""
+def get_all_listing_cache() -> dict:
+    """Retrieves all processed token_mints and their last known prices from the database."""
     with get_session() as session:
-        rows = session.query(Listing.listing_id).all()
-        return {row[0] for row in rows}
+        rows = session.query(Listing.token_mint, Listing.price_amount).filter(Listing.token_mint.isnot(None)).all()
+        return {row[0]: row[1] or 0.0 for row in rows}
 
 def get_initial_reaper_queue_items() -> list[str]:
     """Queries the DB for all active, relevant listings to populate the reaper queue."""
@@ -213,6 +241,17 @@ def update_listing_details(listing_id: str, payload: dict):
     with get_session() as session:
         session.query(Listing).filter(Listing.listing_id == listing_id).update(payload)
         session.commit()
+
+def update_listing_details_by_mint(mint_address: str, payload: dict):
+    """
+    Updates an existing listing with a dictionary of new values, using mint address.
+    """
+    if not payload:
+        return
+    with get_session() as session:
+        session.query(Listing).filter(Listing.token_mint == mint_address).update(payload)
+        session.commit()
+    logger.info(f"💾 [DB] Updated details for mint {mint_address[:8]}... | Keys: {list(payload.keys())}")
 
 def get_all_active_listings() -> list[dict]:
     """Fetches all listings that are currently marked as listed."""
@@ -304,7 +343,7 @@ def get_global_blacklist() -> list[str]:
         settings = session.query(UserSettings).first()
         if settings and settings.blacklisted_keywords:
             return [k.strip().lower() for k in settings.blacklisted_keywords.split(',') if k.strip()]
-        return ['black star', 'sticker', 'stickers'] # Default fallback
+        return ['black star', 'sticker', 'stickers','mislabel', 'error', 'stamp', 'championship', 'french', 'german', 'spanish', 'turkish', 'russian', 'italian', 'sticker', 'coin', 'photo', 'authentic', 'authenticated', 'label', 'signature', 'sign', 'altered', 'damaged','test', 'miscut'] # Default fallback
 
 def get_eligible_buyers(price_sol: float) -> list[dict]:
     """
@@ -320,3 +359,20 @@ def get_eligible_buyers(price_sol: float) -> list[dict]:
             UserSettings.min_price <= price_sol
         ).order_by(UserSettings.priority.asc()).all()
         return [row.__dict__ for row in rows]
+
+def create_notification(user_wallet: str | None, title: str, message: str, type: str = 'SYSTEM', params: dict = None):
+    """
+    Creates a new notification entry in the database.
+    """
+    import json
+    with get_session() as session:
+        notification = Notification(
+            user_wallet=user_wallet,
+            title=title,
+            message=message,
+            type=type,
+            params=json.dumps(params) if params else None
+        )
+        session.add(notification)
+        session.commit()
+        logger.info(f"Notification created: {title} (User: {user_wallet})")

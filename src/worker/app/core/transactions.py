@@ -46,6 +46,15 @@ async def execute_buy(user_wallet: str, encrypted_private_key: str, listing: dic
     Returns:
         True if the transaction was submitted successfully, False otherwise.
     """
+    # --- DRY RUN SAFETY CHECK ---
+    if os.getenv("DRY_RUN", "false").lower() == "true":
+        logger.warning(f"🛡️ [DRY RUN] Would EAT (Buy) {listing.get('name')} for {listing.get('price_amount')} SOL using wallet {user_wallet[:8]}...")
+        # Simulate a small delay like a real RPC call
+        import asyncio
+        await asyncio.sleep(1)
+        logger.info(f"✅ [DRY RUN] Fake Success: Bought {listing.get('name')}!")
+        return True
+
     try:
         # 1. Decrypt Private Key
         try:
@@ -100,11 +109,21 @@ async def execute_buy(user_wallet: str, encrypted_private_key: str, listing: dic
             "buyer": str(keypair.pubkey()),
             "seller": seller,
             "tokenMint": token_mint,
-            "tokenATA": token_ata, # THIS IS RISKY if None
+            # "tokenATA": token_ata, # Removed to simplify as per user request/testing
             "price": price,
-            "buyerExpiry": "0",
-            "sellerExpiry": "0"
+            # "buyerExpiry": "0", # Removed
+            # "sellerExpiry": "0" # Removed
         }
+        
+        # Add V2 specific params if available
+        if listing.get('auction_house'):
+            params['auctionHouseAddress'] = listing['auction_house']
+        if listing.get('seller_referral'):
+            params['sellerReferral'] = listing['seller_referral']
+        if listing.get('expiry'):
+             params['expiry'] = listing['expiry']
+             
+        logger.info(f"Buying with Params: {params}")
         
         # 3. Call ME API to get Transaction
         url = "https://api-mainnet.magiceden.dev/v2/instructions/buy_now"

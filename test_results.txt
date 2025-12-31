@@ -1,0 +1,88 @@
+2025-12-26 23:03:24,573 - Using Magic Eden API Key for authenticated requests.
+2025-12-26 23:03:25,155 - \U0001f9ea STARTING STRESS TEST SIMULATION...
+2025-12-26 23:03:25,156 - ------------------------------------------------
+2025-12-26 23:03:25,160 - \n\u25b6\ufe0f Running: \U0001f6ab 1. Invalid Category (Magic)
+2025-12-26 23:03:25,160 - \U0001f527 [Processor] Entering process_listing for Black Lotus
+2025-12-26 23:03:25,160 - \u26a0\ufe0f [Skipped] Non-Pokemon Category: magic | Black Lotus
+2025-12-26 23:03:25,160 -    Result: SKIP | Expected: SKIP | \u2705
+2025-12-26 23:03:25,160 - \n\u25b6\ufe0f Running: \U0001f6ab 2. Invalid Company (CGC)
+2025-12-26 23:03:25,160 - \U0001f527 [Processor] Entering process_listing for Charizard
+2025-12-26 23:03:25,160 - \u26a0\ufe0f [Skipped] Invalid Company: CGC | Charizard
+2025-12-26 23:03:25,160 -    Result: SKIP | Expected: SKIP | \u2705
+2025-12-26 23:03:25,160 - \n\u25b6\ufe0f Running: \U0001f535 3. BLUE Deal (-16%)
+2025-12-26 23:03:25,162 - \U0001f527 [Processor] Entering process_listing for Pikachu
+2025-12-26 23:03:25,162 - \u26a1 Processing: Pikachu | 84 SOL
+2025-12-26 23:03:25,162 - \u23f3 [DEBUG] Starting Parallel Fetch (CC + Alt) for Pikachu...
+2025-12-26 23:03:25,162 - \U0001f3c1 [DEBUG] Finished Parallel Fetch for Pikachu
+2025-12-26 23:03:25,162 - \u2705 [Verified] Metadata matches CC: Pikachu
+2025-12-26 23:03:25,162 - \U0001f504 [Name Update] Replacing ME Name: 'Pikachu' with CC Full Name: 'Mock Title'
+2025-12-26 23:03:25,162 - \U0001f4b1 [DEBUG] Converting Price: 84 SOL
+2025-12-26 23:03:25,163 - \U0001f4b0 [DEBUG] Alt Value: $100 | Conf: 90
+2025-12-26 23:03:25,163 - \U0001f9ee [DEBUG] Checking Deal Logic: Alt Val $100 | List USD $84 | Conf 90
+2025-12-26 23:03:25,163 - \U0001f4c9 Discount Calculated: -16.00% (Price: $84.00 vs Alt: $100.00)
+2025-12-26 23:03:25,163 - \U0001f535 [Info Alert] -16.00% Discount
+2025-12-26 23:03:25,166 -    Result: OK | Expected: OK | \u2705
+2025-12-26 23:03:25,166 -    \U0001f4e9 Notification: Level=INFO | Broadcast=False | Target=None
+2025-12-26 23:03:25,166 - \n\u25b6\ufe0f Running: \U0001f534 4. RED Deal (-25%)
+2025-12-26 23:03:25,166 - \U0001f527 [Processor] Entering process_listing for Mewtwo
+2025-12-26 23:03:25,166 - \u26a1 Processing: Mewtwo | 75 SOL
+2025-12-26 23:03:25,166 - \u23f3 [DEBUG] Starting Parallel Fetch (CC + Alt) for Mewtwo...
+2025-12-26 23:03:25,166 - \U0001f3c1 [DEBUG] Finished Parallel Fetch for Mewtwo
+2025-12-26 23:03:25,166 - \u2705 [Verified] Metadata matches CC: Mewtwo
+2025-12-26 23:03:25,166 - \U0001f504 [Name Update] Replacing ME Name: 'Mewtwo' with CC Full Name: 'Mock Title'
+2025-12-26 23:03:25,167 - \U0001f4b1 [DEBUG] Converting Price: 75 SOL
+2025-12-26 23:03:25,167 - \U0001f4b0 [DEBUG] Alt Value: $100 | Conf: 90
+2025-12-26 23:03:25,167 - \U0001f9ee [DEBUG] Checking Deal Logic: Alt Val $100 | List USD $75 | Conf 90
+2025-12-26 23:03:25,167 - \U0001f4c9 Discount Calculated: -25.00% (Price: $75.00 vs Alt: $100.00)
+2025-12-26 23:03:25,167 -    Result: GOOD | Expected: GOOD | \u2705
+2025-12-26 23:03:25,167 -    \U0001f4e9 Notification: Level=HIGH | Broadcast=True | Target=None
+2025-12-26 23:03:25,167 - \n\u25b6\ufe0f Running: \U0001f7e1 5. GOLD Deal (High Discount, Low Conf)
+2025-12-26 23:03:25,167 - \U0001f527 [Processor] Entering process_listing for Lugia
+2025-12-26 23:03:25,167 - \u26a1 Processing: Lugia | 50 SOL
+2025-12-26 23:03:25,168 - \u23f3 [DEBUG] Starting Parallel Fetch (CC + Alt) for Lugia...
+2025-12-26 23:03:25,168 - \U0001f3c1 [DEBUG] Finished Parallel Fetch for Lugia
+2025-12-26 23:03:25,168 - \u2705 [Verified] Metadata matches CC: Lugia
+2025-12-26 23:03:25,168 - \U0001f504 [Name Update] Replacing ME Name: 'Lugia' with CC Full Name: 'Mock Title'
+2025-12-26 23:03:25,168 - \U0001f4b1 [DEBUG] Converting Price: 50 SOL
+2025-12-26 23:03:25,168 - \U0001f4b0 [DEBUG] Alt Value: $100 | Conf: 60
+2025-12-26 23:03:25,168 - \U0001f9ee [DEBUG] Checking Deal Logic: Alt Val $100 | List USD $50 | Conf 60
+2025-12-26 23:03:25,168 - \U0001f4c9 Discount Calculated: -50.00% (Price: $50.00 vs Alt: $100.00)
+2025-12-26 23:03:25,168 - \U0001f4c9 Downgrading AUTOBUY to GOLD due to confidence 60 <= 75
+2025-12-26 23:03:25,169 -    Result: GOLD | Expected: GOLD | \u2705
+2025-12-26 23:03:25,169 -    \U0001f4e9 Notification: Level=GOLD | Broadcast=True | Target=None
+2025-12-26 23:03:25,169 - \n\u25b6\ufe0f Running: \u26a1 6. AUTOBUY (High Discount, High Conf)
+2025-12-26 23:03:25,169 - \U0001f527 [Processor] Entering process_listing for Rayquaza
+2025-12-26 23:03:25,169 - \u26a1 Processing: Rayquaza | 50 SOL
+2025-12-26 23:03:25,169 - \u23f3 [DEBUG] Starting Parallel Fetch (CC + Alt) for Rayquaza...
+2025-12-26 23:03:25,169 - \U0001f3c1 [DEBUG] Finished Parallel Fetch for Rayquaza
+2025-12-26 23:03:25,169 - \u2705 [Verified] Metadata matches CC: Rayquaza
+2025-12-26 23:03:25,169 - \U0001f504 [Name Update] Replacing ME Name: 'Rayquaza' with CC Full Name: 'Mock Title'
+2025-12-26 23:03:25,169 - \U0001f4b1 [DEBUG] Converting Price: 50 SOL
+2025-12-26 23:03:25,169 - \U0001f4b0 [DEBUG] Alt Value: $100 | Conf: 80
+2025-12-26 23:03:25,169 - \U0001f9ee [DEBUG] Checking Deal Logic: Alt Val $100 | List USD $50 | Conf 80
+2025-12-26 23:03:25,169 - \U0001f4c9 Discount Calculated: -50.00% (Price: $50.00 vs Alt: $100.00)
+2025-12-26 23:03:25,170 - \u26a1 AUTOBUY TRIGGERED for Mock Title! Found 1 buyers.
+2025-12-26 23:03:25,170 -   -> Attempting Buy for User: User1_Wallet (Priority 1)
+2025-12-26 23:03:25,170 - \U0001f6e1\ufe0f [DRY RUN] Would EAT (Buy) Mock Title for 50 SOL using wallet User1_Wa...
+2025-12-26 23:03:26,172 - \u2705 [DRY RUN] Fake Success: Bought Mock Title!
+2025-12-26 23:03:26,173 - \u2705 AUTOBUY SUCCESS for User: User1_Wallet!
+2025-12-26 23:03:26,175 -    Result: AUTOBUY | Expected: AUTOBUY | \u2705
+2025-12-26 23:03:26,175 -    \U0001f4e9 Notification: Level=AUTOBUY | Broadcast=True | Target=123456789
+2025-12-26 23:03:26,175 -    \U0001f3af AUTOBUY Logic Verified: User DM + Admin Broadcast set.
+2025-12-26 23:03:26,175 - \n\u25b6\ufe0f Running: \U0001f36f 7. HONEYPOT (-90%)
+2025-12-26 23:03:26,175 - \U0001f527 [Processor] Entering process_listing for Gengar
+2025-12-26 23:03:26,175 - \u26a1 Processing: Gengar | 10 SOL
+2025-12-26 23:03:26,175 - \u23f3 [DEBUG] Starting Parallel Fetch (CC + Alt) for Gengar...
+2025-12-26 23:03:26,175 - \U0001f3c1 [DEBUG] Finished Parallel Fetch for Gengar
+2025-12-26 23:03:26,175 - \u2705 [Verified] Metadata matches CC: Gengar
+2025-12-26 23:03:26,176 - \U0001f504 [Name Update] Replacing ME Name: 'Gengar' with CC Full Name: 'Mock Title'
+2025-12-26 23:03:26,176 - \U0001f4b1 [DEBUG] Converting Price: 10 SOL
+2025-12-26 23:03:26,176 - \U0001f4b0 [DEBUG] Alt Value: $100 | Conf: 90
+2025-12-26 23:03:26,176 - \U0001f9ee [DEBUG] Checking Deal Logic: Alt Val $100 | List USD $10 | Conf 90
+2025-12-26 23:03:26,176 - \U0001f4c9 Discount Calculated: -90.00% (Price: $10.00 vs Alt: $100.00)
+2025-12-26 23:03:26,176 - \U0001f6a8 [Suspicious] Discount Cap Hit (-85%): -90.00% | Mock Title
+2025-12-26 23:03:26,176 -    Result: SUSPICIOUS | Expected: SUSPICIOUS | \u2705
+2025-12-26 23:03:26,176 -    \U0001f4e9 Notification: Level=AUTOBUY | Broadcast=False | Target=None
+2025-12-26 23:03:26,176 - 
+------------------------------------------------
+2025-12-26 23:03:26,176 - \U0001f3c1 Stress Test Complete.

@@ -63,3 +63,56 @@ async def get_price_in_both_currencies(amount: float, currency: str) -> dict | N
             return {'price_sol': amount / _cached_sol_price, 'price_usdc': amount}
     return None
 
+
+def normalize_name(name: str) -> str:
+    """
+    Normalizes a card name for comparison by removing specific punctuation and spaces.
+    """
+    if not name: return ""
+    import re
+    # Remove all non-alphanumeric characters (keep only letters and numbers)
+    return re.sub(r'[^a-zA-Z0-9]', '', name.lower())
+
+
+def calculate_token_overlap(name1: str, name2: str) -> float:
+    """
+    Calculates the percentage of important tokens from the shorter name 
+    that are present in the longer name. Returns a float between 0.0 and 1.0.
+    """
+    if not name1 or not name2:
+        return 0.0
+    
+    import re
+    
+    # helper to tokenize
+    def tokenize(text):
+        # lower, remove non-alphanumeric (keep spaces as separator)
+        clean = re.sub(r'[^a-z0-9\s]', '', text.lower())
+        tokens = set(clean.split())
+        return tokens
+
+    set1 = tokenize(name1)
+    set2 = tokenize(name2)
+    
+    # Remove insignificant common words
+    # "1st" and "shadowless" ARE important.
+    # But "pokemon", "psa", "bgs" are noise.
+    refined_ignore = {'pokemon', 'psa', 'bgs', 'cgc', 'card', 'tcg', 'en', 'jp', 'english', 'japanese'}
+    
+    set1 = {t for t in set1 if t not in refined_ignore}
+    set2 = {t for t in set2 if t not in refined_ignore}
+    
+    if not set1 or not set2:
+        return 0.0
+
+    # Calculate intersection
+    intersection = set1.intersection(set2)
+    
+    # We want to know if the defining characteristics of one are in the other.
+    # Use the smaller set as the denominator to handle "Charizard vs Charizard PSA 10"
+    min_len = min(len(set1), len(set2))
+    
+    if min_len == 0: return 0.0
+    
+    return len(intersection) / min_len
+

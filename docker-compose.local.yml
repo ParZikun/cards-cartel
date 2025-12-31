@@ -16,7 +16,10 @@ services:
     volumes:
       - ./data:/app/data
       - ./scripts:/app/scripts
-      - ./src:/app/src
+      # CRITICAL FIX: Mount source code directly to where the app runs to ensure live updates
+      - ./src/worker:/app/worker
+      - ./src/database:/app/database
+      # - ./src:/app/src (Removed as it is not used by the running process)
     env_file:
       - ./.env.local
     environment:
@@ -36,7 +39,10 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./src:/app/src
+      # Match Worker Logic: Mount source directly
+      - ./src/api:/app/api
+      - ./src/database:/app/database
+      # - ./src:/app/src (Removed)
     env_file:
       - ./.env.local
     environment:

@@ -24,7 +24,7 @@ from datetime import datetime, timezone, timedelta
 
 # Import the new core modules
 from worker.app.core import processor
-from worker.app.core import syncer
+# from worker.app.core import syncer # Unused
 
 # --- Setup Logging ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -59,6 +59,7 @@ async def listing_consumer_worker(worker_id: int, listing_queue: asyncio.Priorit
         try:
             # Unpack the 3-element tuple (priority, count, listing)
             priority, _, listing = await listing_queue.get()
+            logger.info(f"👉 Consumer {worker_id} dequeued: {listing.get('name', 'Unknown')} | Price: {listing.get('price_amount')}")
             
             # Process the listing
             # NOTE: fast_mode will be enabled inside processor based on context or we update processor to handle it.
@@ -68,19 +69,23 @@ async def listing_consumer_worker(worker_id: int, listing_queue: asyncio.Priorit
             
             # CRITICAL FIX: Add valuable finds to reaper (verification_queue) for continuous monitoring.
             if category in ['AUTOBUY', 'GOOD', 'OK'] and listing.get('token_mint'):
-                logger.info(f"Consumer {worker_id}: Adding {listing.get('name')} ({category}) to Reaper for monitoring.")
+                logger.debug(f"Consumer {worker_id}: Adding {listing.get('name')} ({category}) to Reaper for monitoring.")
                 await verification_queue.put(listing['token_mint'])
             
             listing_queue.task_done()
         except Exception as e:
             logger.error(f"Consumer {worker_id} error: {e}", exc_info=True)
+            await snipe_queue.put({'alert_level': 'LOG', 'reason': f"⚠️ **Worker Error** (ID {worker_id}): {e}"})
             # Prevent rapid crash loops
             await asyncio.sleep(1)
 
-async def reaper(verification_queue: asyncio.Queue, listing_queue: asyncio.PriorityQueue):
+async def reaper(verification_queue: asyncio.Queue, listing_processing_queue: asyncio.PriorityQueue):
     """
-    Pulls a mint address from the verification queue.
-    If it needs analysis, puts it into the processing queue with LOWER priority.
+    [Safety Net] Background Maintenance Task.
+    - Default State: IDLE (Waits for items in 'verification_queue').
+    - Trigger: Manual rechecks from Discord or specific edge cases.
+    - Action: Checks ME status (Throttled). Updates price in DB or marks as sold.
+    - Output: If valid & active, puts into 'listing_processing_queue' (Low Priority) for analysis.
     """
     logger.info("--- Starting Reaper ---")
     while True:
@@ -132,12 +137,21 @@ async def reaper(verification_queue: asyncio.Queue, listing_queue: asyncio.Prior
                 verification_queue.task_done()
 
 
-async def cartel_recheck(queue: asyncio.PriorityQueue, timeframe: str, interaction: discord.Interaction):
+async def cartel_recheck(listing_queue: asyncio.PriorityQueue, verification_queue: asyncio.Queue, timeframe: str, interaction: discord.Interaction):
     """
-    Fetches active listings marked as 'SKIP' and queues them for processing.
+    1. Refreshes active 'DEALS' (GOOD, OK, AUTOBUY) by queuing them for Reaper verification.
+    2. Fetches 'SKIP' listings within timeframe and queues them for full re-processing.
     """
-    logger.info(f"--- Starting a re-check of 'SKIP' listings for timeframe: {timeframe} ---")
+    logger.info(f"--- Starting Cartel Recheck (Deals + Skips) for timeframe: {timeframe} ---")
     
+    # --- Step 1: Refresh Active Deals ---
+    active_deals = await asyncio.to_thread(database.get_initial_reaper_queue_items)
+    if active_deals:
+        logger.info(f"Adding {len(active_deals)} active deals to verification queue (Reaper).")
+        for mint in active_deals:
+            await verification_queue.put(mint)
+            
+    # --- Step 2: Recheck Skipped Listings ---
     time_deltas = {
         "1H": timedelta(hours=1),
         "2H": timedelta(hours=2),
@@ -153,21 +167,17 @@ async def cartel_recheck(queue: asyncio.PriorityQueue, timeframe: str, interacti
 
     skipped_listings = await asyncio.to_thread(database.get_skipped_listings, since_timestamp)
 
-    if not skipped_listings:
-        await interaction.followup.send(f"ℹ️ No 'SKIP' listings found to re-check.", ephemeral=True)
-        return
+    msg = f"🔄 **Recheck Started!**\n1. Queued **{len(active_deals)}** active deals for live status check.\n"
 
-    logger.info(f"Queuing {len(skipped_listings)} 'SKIP' listings for re-check (Priority 1).")
-    
-    for listing in skipped_listings:
-        # Priority 1 for re-checks
-        await queue.put((1, next(queue_tie_breaker), listing))
+    if not skipped_listings:
+        msg += f"2. No 'SKIP' listings found to re-process."
+    else:
+        msg += f"2. Queued **{len(skipped_listings)}** 'SKIP' listings for re-analysis (Priority 1)."
+        logger.info(f"Queuing {len(skipped_listings)} 'SKIP' listings for re-check (Priority 1).")
+        for listing in skipped_listings:
+            await listing_queue.put((1, next(queue_tie_breaker), listing))
         
-    await interaction.followup.send(
-        f"✅ **Re-check Queued!**\n"
-        f"Queued **{len(skipped_listings)}** listings for background processing.",
-        ephemeral=True
-    )
+    await interaction.followup.send(msg, ephemeral=True)
 
 async def initial_population(queue: asyncio.PriorityQueue):
     """
@@ -193,58 +203,191 @@ async def initial_population(queue: asyncio.PriorityQueue):
             
     logger.info("--- Initial population queued! ---")
 
-async def watchdog(queue: asyncio.PriorityQueue):
+async def watchdog(queue: asyncio.PriorityQueue, alert_queue: asyncio.Queue):
     """
     The main high-speed watchdog loop.
     True Producer: Fetches from ME and dumps to Queue. Never waits for processing.
     """
     logger.info("--- Starting Watchdog (Producer) ---")
-    processed_ids = await asyncio.to_thread(database.get_all_listing_ids)
-    logger.info(f"Loaded {len(processed_ids)} previously processed listing IDs.")
     
+    # CRITICAL: initialized as Dict[mint, price]
+    processed_cache = await asyncio.to_thread(database.get_all_listing_cache)
+    logger.info(f"Loaded {len(processed_cache)} previously processed items (with prices).")
+    
+    # CRITICAL: signature-based deduplication for Activity Feed
+    processed_signatures = set()
+
+    # True Parallelism: Two independent loops feeding the same queue
+    await asyncio.gather(
+        watchdog_activity_loop(processed_cache, processed_signatures, queue, alert_queue),
+        watchdog_idxv2_loop(processed_cache, queue, alert_queue)
+    )
+
+async def watchdog_activity_loop(processed_cache: dict, processed_signatures: set, queue: asyncio.PriorityQueue, alert_queue: asyncio.Queue):
+    """
+    [Loop A] Activity Feed Monitor
+    - Interval: 1.5s (High Speed).
+    - Role: Catches events in real-time. Backup for Time Travel.
+    """
+    logger.info("--- 🟢 Starting Activity Monitor (1.5s) ---")
     while True:
         try:
-            start_time = time.time()
-            # Fetch new listings
             blacklist = database.get_global_blacklist()
-            new_listings = await me.fetch_new_listings_async(processed_ids, blacklisted_keywords=blacklist)
+            # This function modifies processed_cache in-place to dedup
+            new_listings, sold_mints = await me.fetch_new_listings_async(
+                processed_cache, 
+                processed_signatures=processed_signatures,
+                blacklisted_keywords=blacklist
+            )
+            
+            if sold_mints:
+                logger.debug(f"[Activity] Found {len(sold_mints)} sold items. Syncing DB...")
+                for mint in sold_mints:
+                     await asyncio.to_thread(database.update_listing_status, mint, False)
             
             if new_listings:
-                logger.info(f"Watchdog found {len(new_listings)} new items! Queuing at Priority 0.")
-                
+                logger.info(f"⚡ [Activity] Found {len(new_listings)} NEW items!")
                 for listing in new_listings:
-                    processed_ids.add(listing['listing_id'])
-                    await asyncio.to_thread(database.save_listing, [listing])
-                    
-                    # Push to Queue with Priority 0 (Highest)
-                    await queue.put((0, next(queue_tie_breaker), listing))
+                    await process_and_queue_listing(listing, queue)
             
-            # Adaptive Sleep? 
-            # If we took long to fetch, sleep less. 
-            # Ideally we want to poll as fast as ME rate limits allow.
-            # Fixed 300ms is aggressive but good.
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(1.5)
             
         except Exception as e:
-            logger.critical(f"Make sure you have internet connection error in watchdog loop: {e}", exc_info=True)
-            await asyncio.sleep(5)
+            if "429" in str(e):
+                 logger.error("429 Rate Limit in Activity Monitor - Backing off!")
+                 await alert_queue.put({'alert_level': 'LOG', 'reason': f"⚠️ **Rate Limit Hit** (Activity Loop): {e}"})
+                 await asyncio.sleep(10)
+            else:
+                 logger.error(f"[Activity] Monitor error: {e}")
+                 await alert_queue.put({'alert_level': 'LOG', 'reason': f"⚠️ **Error** (Activity Loop): {e}"})
+                 await asyncio.sleep(5)
+
+async def watchdog_idxv2_loop(processed_cache: dict, queue: asyncio.PriorityQueue, alert_queue: asyncio.Queue):
+    """
+    [Loop B] Idxv2 Feed Monitor
+    - Interval: 2.0s (Safety Mode).
+    - Role: Main fast feed. Fetches partial/full data.
+    """
+    logger.info("--- 🚀 Starting Idxv2 Monitor (2.0s) ---")
+    while True:
+        try:
+            blacklist = database.get_global_blacklist()
+            # This function also modifies processed_cache in-place
+            new_listings, count = await me.fetch_latest_listings_async(processed_cache, blacklisted_keywords=blacklist)
+            
+            if count > 0:
+                logger.info(f"🔥 [Idxv2] Found {count} NEW items!")
+                for listing in new_listings:
+                    await process_and_queue_listing(listing, queue)
+            
+            await asyncio.sleep(2.0)
+            
+        except Exception as e:
+            if "429" in str(e):
+                 logger.error("429 Rate Limit in Idxv2 Monitor - Backing off!")
+                 await alert_queue.put({'alert_level': 'LOG', 'reason': f"⚠️ **Rate Limit Hit** (Idxv2 Loop): {e}"})
+                 await asyncio.sleep(10)
+            else:
+                 logger.error(f"[Idxv2] Monitor error: {e}")
+                 await alert_queue.put({'alert_level': 'LOG', 'reason': f"⚠️ **Error** (Idxv2 Loop): {e}"})
+                 await asyncio.sleep(5)
+
+async def process_and_queue_listing(listing: dict, queue: asyncio.PriorityQueue):
+    """Helper to save and queue a listing."""
+    # listing['listing_id'] is already ensuring it's not in processed_ids via the fetch functions
+    logger.info(f"📥 [Queue] Enqueueing: {listing.get('name', 'Unknown')} | {listing.get('price_amount', 0)} {listing.get('price_currency', 'SOL')}")
+    await asyncio.to_thread(database.save_listing, [listing])
+    await queue.put((0, next(queue_tie_breaker), listing))
+
+async def full_database_refresh():
+    """
+    Fetches all active listings from DB and refreshes their status/price from ME API.
+    Runs sequentially to avoid rate limits before the high-speed watchdog starts.
+    """
+    logger.info("--- 🔄 Starting Full Database Refresh (Pre-flight Check) ---")
+    active_mints = await asyncio.to_thread(database.get_initial_reaper_queue_items)
+    
+    if not active_mints:
+        logger.info("No active listings found in DB. Clean slate.")
+        return
+
+    logger.info(f"Checking {len(active_mints)} active listings one by one... (Safety Mode)")
+    
+    # We use a limited semaphore here too, or just sequential loop.
+    # Since we want to be safe, sequential with small sleep is fine, or gather withsemaphore.
+    # me.check_listing_status_async already uses the GLOBAL SEMAPHORE (Limit 5).
+    # so we can use gather here safely!
+    
+    tasks = []
+    for mint in active_mints:
+        tasks.append(reaper_check_logic(mint))
+        
+    # Process in chunks to show progress? Or just all at once (limited by semaphore)
+    # 5 concurrent requests approx 2/s = 200 items take 100s. 
+    # If 200 items, we might want chunks.
+    
+    CHUNK_SIZE = 50
+    for i in range(0, len(tasks), CHUNK_SIZE):
+        chunk = tasks[i:i + CHUNK_SIZE]
+        await asyncio.gather(*chunk)
+        logger.info(f"Refreshed batch {i}-{i+len(chunk)}/{len(tasks)}")
+        await asyncio.sleep(1) # Cooldown between chunks
+        
+    logger.info("--- ✅ Full Database Refresh Complete! Starting Watchdog... ---")
+
+async def reaper_check_logic(mint_address: str):
+    """
+    Helper for database refresh that mimics reaper logic but doesn't loop.
+    """
+    try:
+        card_data = await me.check_listing_status_async(mint_address)
+        
+        if isinstance(card_data, dict) and card_data.get('listStatus') == "listed":
+            # Update price if needed
+            fresh_price = card_data.get('price')
+            if fresh_price:
+                 logger.info(f"Checking {mint_address[:8]}... Price: {fresh_price}")
+                 await asyncio.to_thread(database.update_listing_details_by_mint, mint_address, {'price_amount': float(fresh_price)})
+        else:
+            # Delisted
+            if card_data != "not_found": # if not_found, effectively delisted or bad mint
+                 logger.info(f"Pre-flight: Listing {mint_address} is no longer active. Marking inactive.")
+                 await asyncio.to_thread(database.update_listing_status, mint_address, False)
+            elif card_data == "not_found":
+                 logger.info(f"Pre-flight: Listing {mint_address} not found on ME. Marking inactive.")
+                 await asyncio.to_thread(database.update_listing_status, mint_address, False)
+
+    except Exception as e:
+        logger.warning(f"Error refreshing {mint_address}: {e}")
 
 async def main():
     """The main entry point for the application."""
     
     # Queue for Discord Alerts (results)
     snipe_queue = asyncio.Queue()
+    
+    # Configure Logging Levels
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    
     logger.info("--- Sniper booting up ---")
     
     await asyncio.to_thread(database.init_db)
+    
+    # --- PHASE 1: Pre-flight Sync (User Requested) ---
+    await full_database_refresh()
 
-    # Convert initial reaper items to verification queue
-    initial_reaper_items = await asyncio.to_thread(database.get_initial_reaper_queue_items)
-    for item in initial_reaper_items:
-        await verification_queue.put(item)
+    # NOTE: We DO NOT populate verification_queue here anymore.
+    # The full_database_refresh has just checked everything.
+    # The Reaper will wait for new signals from Watchdog or User.
     
     # DB Check for initial pop
-    if not await asyncio.to_thread(database.get_all_listing_ids):
+
+    
+    # --- Start Workers ---
+    
+    # DB Check for initial pop
+    if not await asyncio.to_thread(database.get_all_listing_cache):
         # We spawn this as a task so it doesn't block startup
         asyncio.create_task(initial_population(listing_processing_queue))
 
@@ -253,11 +396,12 @@ async def main():
     # 1. Discord Bot (Consumers snipe_queue)
     discord_task = asyncio.create_task(discord_bot.start_discord_bot(
         snipe_queue, 
-        recheck_skipped_callback=lambda timeframe, interaction: cartel_recheck(listing_processing_queue, timeframe, interaction)
+        recheck_skipped_callback=lambda timeframe, interaction: cartel_recheck(listing_processing_queue, verification_queue, timeframe, interaction)
     ))
     
     # 2. Watchdog (Producer for listing_processing_queue - Priority 0)
-    watchdog_task = asyncio.create_task(watchdog(listing_processing_queue))
+    # Passed snipe_queue for System Logs (e.g. Rate Limits)
+    watchdog_task = asyncio.create_task(watchdog(listing_processing_queue, snipe_queue))
     
     # 3. Reaper (Producer for listing_processing_queue - Priority 1 via verification_queue)
     reaper_task = asyncio.create_task(reaper(verification_queue, listing_processing_queue))
@@ -265,7 +409,8 @@ async def main():
     # 4. Listing Consumers (The Worker Pool)
     # Critical: Determine pool size. ALT_API_SEMAPHORE is 10.
     # If we have 20 workers, 10 will be active on Alt, 10 waiting. This ensures Semaphore is always maxed.
-    num_workers = 25
+    # REDUCED to 5 to avoid ME Rate Limits (429) without API Key
+    num_workers = 5
     consumer_tasks = []
     for i in range(num_workers):
         t = asyncio.create_task(listing_consumer_worker(i, listing_processing_queue, snipe_queue, verification_queue))

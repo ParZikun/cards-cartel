@@ -2,7 +2,16 @@ import httpx
 import json
 import asyncio
 import logging
+import time # Perf Logging
 import re
+import os
+from dotenv import load_dotenv
+
+# Ensure env vars are loaded
+if os.path.exists('.env.local'):
+    load_dotenv(dotenv_path='.env.local')
+else:
+    load_dotenv()
 
 # Initialize a logger for this module
 logger = logging.getLogger(__name__)
@@ -11,13 +20,59 @@ logger = logging.getLogger(__name__)
 DEFAULT_BLACKLIST = ['black star', 'sticker', 'stickers']
 
 # Standard headers to mimic browser behavior and avoid 403s
-HEADERS = {
+# Standard headers to mimic browser behavior and avoid 403s
+BASE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json",
 }
 
-# Create a single, reusable async client
+HEADERS = BASE_HEADERS.copy()
+
+# Inject API Key if present
+api_key = os.getenv("ME_API_KEY")
+if api_key:
+    HEADERS["Authorization"] = f"Bearer {api_key}"
+    logger.info("Using Magic Eden API Key for authenticated requests.")
+else:
+    logger.warning("No Magic Eden API Key found. Rate limits will be strict.")
+
+# Authenticated Client (For V2 API)
 async_client = httpx.AsyncClient(headers=HEADERS, timeout=20)
+
+# Public Client (For Idxv2 API - No Auth to avoid issues)
+public_async_client = httpx.AsyncClient(headers=BASE_HEADERS, timeout=20)
+
+# Semaphore to prevent burst 429s (Limit to 2 concurrent checks)
+STATUS_CHECK_SEMAPHORE = asyncio.Semaphore(2)
+
+def _get_attribute_value(attributes_list: list, target_trait: str):
+    """Finds the value for a specific traitType within a list of attributes."""
+    if not attributes_list: return None
+    for attribute in attributes_list:
+        if attribute.get('trait_type') == target_trait:
+            return attribute.get('value')
+    return None
+
+def _process_listing(listing: dict, blacklisted_keywords: list[str] = None):
+    # ... (rest of _process_listing is unchanged, assuming it's correct in context)
+    pass # Replaced content below handles the function body correctly by NOT including it if I don't target it.
+    # Wait, replace_file_content replaces the BLOCK. I need to be careful not to delete _process_listing.
+    # I should only replace the top imports and the candidate fetching loop.
+    # I will split this into two edits if needed, or use a larger block and include existing code.
+    # Actually, I can just replace the imports and GLOBAL vars at the top.
+    
+# ... (I'll stick to the actual tool call parameters)
+
+# EDIT 1: Imports and Globals
+# EDIT 2: fetch_new_listings_async logic
+
+# Let's do EDIT 2 (The throttle) first as it's deeper in the file.
+# Wait, let's do EDIT 1 first to get load_dotenv.
+
+# Re-evaluating: I can do it in one go if I am careful, but safer to do two small edits.
+
+# Edit 1: Top of file imports and checking
+
 
 def _get_attribute_value(attributes_list: list, target_trait: str):
     """Finds the value for a specific traitType within a list of attributes."""
@@ -34,22 +89,62 @@ def _process_listing(listing: dict, blacklisted_keywords: list[str] = None):
     """
     if not listing: return None
 
-    name = listing.get('content', "Unknown")
+    # CRITICAL FIX: Ensure listing_id exists.
+    listing_id = listing.get('id') or listing.get('mintAddress') or listing.get('tokenMint')
+    if not listing_id:
+        # If we absolutely cannot find an ID, we cannot process this.
+        return None
+
+    # CRITICAL: Idxv2 uses 'content', Activity/V2 uses 'name' or 'title'
+    name = listing.get('content') or listing.get('name') or listing.get('title') or "Unknown"
+
+    # CRITICAL: If no price, it's likely unlisted or not a valid listing object.
+    raw_price = listing.get('price')
+    price_info = listing.get('priceInfo') # Sometimes nested
+    
+    if not raw_price and not price_info:
+        # Silently skip items that are clearly not listed
+        # (The activity feed often returns "list" events that reference a mint, but the fetched details might be stale or partial)
+        return None
+
+    # DEBUG: Raw Data Dump only if name is missing (Price is handled above)
+    if name == "Unknown":
+         # Limit log size
+         logger.warning(f"🚨 [Mapping Fail] Name Unknown: {json.dumps(listing, default=str)[:1000]}")
     
     # Use passed list or default
     blacklist = blacklisted_keywords if blacklisted_keywords is not None else DEFAULT_BLACKLIST
     
     for keyword in blacklist:
         if keyword in name.lower():
-            logger.debug(f"Skipping blacklisted card: {name}")
+            logger.info(f"⚠️ [Skipped] Blacklisted: {name} (Keyword: {keyword})")
             return None
 
     attributes = listing.get('attributes', [])
-    company = _get_attribute_value(attributes, "Grading Company")
-    if not company or company.upper() not in ["PSA", "BECKETT", "BGS"]: return None
-    if company.upper() in ["BECKETT", "BGS"]: company = "BGS"
+    # --- STRICT FILTERING (User Request) ---
+    # 1. Verification: Category MUST be Pokemon
+    category_attr = _get_attribute_value(attributes, "Category")
+    if not category_attr or "pokemon" not in category_attr.lower():
+        # logger.debug(f"⚠️ [Skipped] Non-Pokemon Category: {category_attr} for {name}")
+        return None
 
-    category = "Card"
+    # 2. Verification: Company MUST be PSA, BGS, or Beckett
+    company = _get_attribute_value(attributes, "Grading Company")
+    if not company:
+        return None
+        
+    company_upper = company.upper()
+    if company_upper not in ["PSA", "BECKETT", "BGS"]:
+        # logger.debug(f"⚠️ [Skipped] Invalid Company: {company} for {name}")
+        return None
+        
+    if company_upper in ["BECKETT", "BGS"]: 
+        company = "BGS"
+    else:
+        company = "PSA" 
+
+    # 3. Simplify Internal Category (Legacy logic, but kept for DB consistency)
+    category = "Pokemon Card"
     if name and "Bundle" in name:
         category = "Bundle"
     elif name and "Box" in name:
@@ -82,17 +177,35 @@ def _process_listing(listing: dict, blacklisted_keywords: list[str] = None):
         insured_value = float(insured_value_str) if insured_value_str is not None else 0.0
         price_sol = float(listing.get('price', 0))
     except (ValueError, TypeError) as e:
-        logger.warning(f"Could not convert numeric value for '{name}'. Error: {e}. Skipping.")
+        logger.warning(f"⚠️ [Skipped] Data Error for '{name}': {e}")
         return None
 
     if not all([cert_id, name, grade, company]):
-        logger.debug(f"Skipping card with missing critical data: {name}")
+        logger.info(f"⚠️ [Skipped] Missing Attributes: {name} (Cert={cert_id}, Grade={grade}, Company={company})")
         return None
     
-    if price_sol <= 0: return None
+    price_sol = float(listing.get('price', 0))
+    
+    # Currency Detection
+    price_currency = 'SOL'
+    sol_price_data = listing.get('solPrice', {})
+    if sol_price_data.get('address') == 'EPjfwdd5SrqNsFC8CVU4FzJ8G8FpTE3j3v24g85r8rV':
+        price_currency = 'USDC'
+
+    if price_sol <= 0: 
+        logger.info(f"⚠️ [Skipped] Zero Price: {name}")
+        return None
+    
+    # Extract V2 Transaction Details
+    v2_data = listing.get('v2', {})
+    auction_house = v2_data.get('auctionHouseKey')
+    seller_referral = v2_data.get('sellerReferral')
+    expiry = v2_data.get('expiry')
+
+    logger.info(f"✨ [Processed] {name} | Price: {price_sol} {price_currency}")
 
     return {
-        'listing_id': listing.get('id'),
+        'listing_id': listing_id, # Use the resolved, non-null ID
         'name': name,
         'grade_num': grade_num,
         'grade': grade,
@@ -101,10 +214,13 @@ def _process_listing(listing: dict, blacklisted_keywords: list[str] = None):
         'grading_company': company,
         'img_url': listing.get('img'),
         'grading_id': cert_id,
-        'token_mint': listing.get('mintAddress'),
+        'token_mint': listing.get('mintAddress') or listing.get('tokenMint') or listing_id, # Fallback to listing_id if needed
         'price_amount': price_sol,
-        'price_currency': 'SOL', 
-        'listed_at': listing.get('updatedAt'), 
+        'price_currency': price_currency, 
+        'listed_at': listing.get('updatedAt'),
+        'auction_house': auction_house,
+        'seller_referral': seller_referral,
+        'expiry': expiry,
     }
 
 async def _fetch_with_retries_async(url: str, params: dict, retries: int = 5, initial_delay: float = 1.0):
@@ -112,7 +228,8 @@ async def _fetch_with_retries_async(url: str, params: dict, retries: int = 5, in
     delay = initial_delay
     for i in range(retries):
         try:
-            response = await async_client.get(url, params=params)
+            # Use public_async_client for these idxv2 calls
+            response = await public_async_client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
             if isinstance(data, dict):
@@ -130,8 +247,13 @@ async def _fetch_with_retries_async(url: str, params: dict, retries: int = 5, in
                 logger.critical("ME API fetch failed after multiple retries. The service may be down.")
     return []
 
-async def _fetch_listings_async(processed_ids: set | None, limit: int = 100, blacklisted_keywords: list[str] = None):
-    """Unified async fetch function for the new API."""
+    return []
+
+async def _fetch_listings_async(processed_cache: dict | None, limit: int = 100, blacklisted_keywords: list[str] = None):
+    """
+    Unified async fetch function for the new API.
+    processed_cache: Dict[mint_address, last_price]
+    """
     base_url = "https://api-mainnet.magiceden.us/idxv2/getListedNftsByCollectionSymbol"
     
     params = {
@@ -155,26 +277,44 @@ async def _fetch_listings_async(processed_ids: set | None, limit: int = 100, bla
     }
     
     new_listings = []
+    
+    logger.info(f"🔍 [Idxv2] Fetching recent listings (Limit: {limit})...")
     raw_listings = await _fetch_with_retries_async(base_url, params)
+    
+    # --- HEARTBEAT LOG (Requested by User) ---
+    logger.info(f"❤️ [Heartbeat] Fetched {len(raw_listings) if raw_listings else 0} raw items from ME.")
     
     if not raw_listings:
         return new_listings, 0
     
     new_found_count = 0
     for listing in raw_listings:
-        listing_id = listing.get('id')
+        # CRITICAL FIX: Use Mint Address to match Activity Feed logic
+        # Note: Idxv2 uses 'token_mint' (snake_case), not tokenMint
+        listing_id = listing.get('token_mint') or listing.get('mintAddress') or listing.get('tokenMint') or listing.get('id')
         
-        if processed_ids is not None:
-            if listing_id and listing_id not in processed_ids:
+        if processed_cache is not None:
+             # Logic: If NEW mint OR (Known Mint AND Price Changed) -> Process
+             last_price = processed_cache.get(listing_id)
+             current_price = float(listing.get('price', 0))
+             
+             should_process = False
+             if listing_id not in processed_cache:
+                 should_process = True
+             elif abs(last_price - current_price) > 0.01: # Float epsilon
+                 logger.info(f"♻️ [Re-List] Price Change for {listing_id[:8]}: {last_price} -> {current_price}")
+                 should_process = True
+                 
+             if should_process:
                 processed = _process_listing(listing, blacklisted_keywords)
                 if processed:
                     new_listings.append(processed)
                     new_found_count += 1
                 
-                # Add to processed_ids here so we don't process it again
-                processed_ids.add(listing_id)
+                # Update Cache immediately prevents double-queueing in same batch
+                processed_cache[listing_id] = current_price
         else:
-            # This branch is for initial population, where we don't have processed_ids
+            # This branch is for initial population
             processed = _process_listing(listing, blacklisted_keywords)
             if processed:
                 new_listings.append(processed)
@@ -188,13 +328,135 @@ async def fetch_initial_listings_async(limit: int = 100, blacklisted_keywords: l
     """Fetches a specific number of recent listings for initial DB population, asynchronously."""
     logger.info(f"Fetching latest {limit} listings to populate database...")
     initial_listings, _ = await _fetch_listings_async(None, limit=limit, blacklisted_keywords=blacklisted_keywords)
-    processed_ids = {listing['listing_id'] for listing in initial_listings if listing and listing.get('listing_id')}
+    processed_ids = {listing['listing_id'] for listing in initial_listings if listing and listing.get('listing_id')} 
+    # Compatibility: Convert set to dict with prices for initial load
+    # (Actually fetch_initial_listings is usually for pop, we might just return the list/set logic as is, or update caller)
+    # To be safe, we return the list. Caller will build the Cache.
     return initial_listings, processed_ids
 
-async def fetch_new_listings_async(processed_ids: set, blacklisted_keywords: list[str] = None):
-    """Fetches the most recent listings asynchronously and filters out any already processed."""
-    new_listings, _ = await _fetch_listings_async(processed_ids=processed_ids, limit=100, blacklisted_keywords=blacklisted_keywords)
-    return new_listings
+async def fetch_latest_listings_async(processed_cache: dict, blacklisted_keywords: list[str] = None):
+    """
+    [Hybrid Mode] Fetches the 20 newest listings using the efficient IDXv2 endpoint.
+    - Cost: 1 Request.
+    - Benefit: Returns full details immediately.
+    """
+    return await _fetch_listings_async(processed_cache, limit=20, blacklisted_keywords=blacklisted_keywords)
+
+async def fetch_new_listings_async(processed_cache: dict, processed_signatures: set = None, blacklisted_keywords: list[str] = None):
+    """
+    [Producer Logic] Fetches 'activity' events (list/delist/buy).
+    - Rate Limit: Controls the 'burst' of detail checks.
+    - Mechanism: Finds candidates -> Launches tasks -> Tasks wait on 'STATUS_CHECK_SEMAPHORE' (Max 2).
+    Returns: (new_listings, sold_mints_set)
+    """
+    act_url = "https://api-mainnet.magiceden.dev/v2/collections/collector_crypt/activities"
+    params = {'limit': 50}
+    
+    new_listings = []
+    sold_mints = set()
+    
+    try:
+        # 1. Fetch Activities
+        t_start = time.time()
+        response = await async_client.get(act_url, params=params)
+        fetch_dur = time.time() - t_start
+        
+        # PERF LOG: Network Latency
+        logger.info(f"📡 [PERF] ME Fetch Time: {fetch_dur:.3f}s")
+        
+        # Debug: Check Rate Limits
+        rl_limit = response.headers.get('x-ratelimit-limit', 'N/A')
+        rl_rem = response.headers.get('x-ratelimit-remaining', 'N/A')
+        if response.status_code == 429:
+             logger.critical(f"🛑 429 HIT! Headers: Limit={rl_limit}, Remaining={rl_rem}. SLEEPING LONG.")
+             await asyncio.sleep(10) # Mandatory penalty box
+        
+        if response.status_code != 200:
+             logger.warning(f"ME API Error {response.status_code}: RL-Limit={rl_limit}, RL-Rem={rl_rem}")
+        
+        response.raise_for_status()
+        activities = response.json()
+        
+        candidates = []
+        
+        # 2. Filter for events
+        for act in activities:
+            # OPTIMIZATION: Signature Deduplication
+            # Skip ANY event (list/sale) if we have processed its unique signature before.
+            sig = act.get('signature')
+            if processed_signatures is not None and sig:
+                if sig in processed_signatures:
+                    continue
+                processed_signatures.add(sig)
+
+            event_type = act.get('type')
+            token = act.get('token', {})
+            mint = token.get('mintAddress') or act.get('tokenMint')
+            
+            if not mint:
+                continue
+            
+            # NOTE: We rely on processed_signatures for dedup here. 
+            # We do NOT check processed_cache yet, because a new event might mean a price change.
+
+            if event_type == 'list':
+                candidates.append(mint)
+            elif event_type in ['buyNow', 'delist', 'sale', 'buy']:
+                sold_mints.add(mint)
+        
+        if not candidates:
+            return new_listings, sold_mints
+        
+
+
+        # 3. Fetch Full Details for Candidates (Parallel)
+        # We use gather to fetch multiple mints at once
+        logger.debug(f"Found {len(candidates)} list events. Fetching details...")
+         
+        tasks = [check_listing_status_async(mint, retries=2) for mint in candidates]
+        results = await asyncio.gather(*tasks)
+        
+        # 4. Process Results
+        new_found_count = 0
+        for raw_item in results:
+            if raw_item and raw_item != 'not_found' and isinstance(raw_item, dict):
+                # Ensure it's treated as a listing
+                # check_listing_status_async returns the /tokens/{mint} object
+                # It usually matches the structure _process_listing expects, mostly.
+                # It has 'price', 'attributes', 'owner' etc.
+                
+                # Check duplication against processed_ids
+                # The 'id' in this response is sometimes the mint or a specific ID
+                # _process_listing uses listing.get('id')
+                
+                # Optimization: Duplicate Check with Price
+                # Use Mint Address as the canonical ID for filtering
+                mint_key = raw_item.get('token_mint') or raw_item.get('mintAddress') or raw_item.get('tokenMint') or raw_item.get('id')
+                
+                current_price = float(raw_item.get('price', 0))
+                
+                if processed_cache is not None:
+                     last_price = processed_cache.get(mint_key)
+                     # Only skip if Mint exists AND Price is same
+                     if last_price is not None and abs(last_price - current_price) < 0.001:
+                         continue
+
+                processed = _process_listing(raw_item, blacklisted_keywords)
+                if processed:
+                    # Additional Validation: Ensure it is ACTUALLY listed
+                    if processed.get('price_amount', 0) > 0:
+                        new_listings.append(processed)
+                        if processed_cache is not None:
+                             processed_cache[mint_key] = current_price
+                        new_found_count += 1
+
+        if new_found_count > 0:
+            logger.info(f"⚡ Found {new_found_count} fresh listings via Activity Feed!")
+
+    except Exception as e:
+        logger.error(f"Error fetching activities: {e}")
+        
+    return new_listings, sold_mints
 
 
 async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector_crypt', blacklisted_keywords: list[str] = None):
@@ -296,7 +558,9 @@ async def check_listing_status_async(mint_address: str, retries: int = 5, initia
     delay = initial_delay
     for attempt in range(retries):
         try:
-            response = await async_client.get(url)
+            async with STATUS_CHECK_SEMAPHORE:
+                response = await async_client.get(url)
+            
             if response.status_code == 200:
                 data = response.json()
                 return data
