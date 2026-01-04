@@ -321,7 +321,22 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
              status_msg += f" -> **Alert: {alert_level}**"
         else:
              status_msg += " -> **No Deal** (Price too high)"
-        await log_trace(status_msg, details_override=snipe_details)
+        
+        # --- DEDUPLICATE TRACE LOGS FOR "NO DEAL" ---
+        should_log_trace = True
+        if not alert_level: # It's a "No Deal"
+            if existing_db and existing_db.get('cartel_category') == 'SKIP':
+                 # Previous was also SKIP.
+                 old_price = existing_db.get('price_amount') or 0
+                 new_price = listing.get('price_amount') or 0
+                 
+                 # If price difference is small (< 1%), suppress trace log.
+                 if old_price > 0 and abs(new_price - old_price) / old_price < 0.01:
+                      should_log_trace = False
+                      logger.info(f"🔇 [Trace Suppressed] Micro-update for {listing.get('name')} (Price Diff < 1%)")
+
+        if should_log_trace:
+             await log_trace(status_msg, details_override=snipe_details)
 
         # Critical: Verify logic runs only for AUTOBUY deals
         if cartel_category == 'AUTOBUY':

@@ -343,13 +343,23 @@ async def _fetch_listings_async(processed_cache: dict | None, limit: int = 100, 
                  should_process = True
                  
              if should_process:
-                processed = _process_listing(listing, blacklisted_keywords)
-                if processed:
-                    new_listings.append(processed)
-                    new_found_count += 1
-                
-                # Update Cache immediately prevents double-queueing in same batch
-                processed_cache[listing_id] = current_price
+                # GLOBAL DEDUPLICATION: Attempt to acquire lock
+                # This prevents Activity Monitor from processing the same item simultaneously
+                acquired, reason = await PROCESSING_MANAGER.try_acquire(listing_id, float(listing.get('price', 0)))
+                if not acquired:
+                    continue
+
+                try:
+                    processed = _process_listing(listing, blacklisted_keywords)
+                    if processed:
+                        new_listings.append(processed)
+                        new_found_count += 1
+                    
+                    # Update Cache immediately
+                    processed_cache[listing_id] = current_price
+                finally:
+                    # Release lock and update internal ProcessingManager cache
+                    await PROCESSING_MANAGER.release(listing_id, float(listing.get('price', 0)))
         else:
             # This branch is for initial population
             processed = _process_listing(listing, blacklisted_keywords)
@@ -480,6 +490,9 @@ async def fetch_new_listings_async(processed_cache: dict, processed_signatures: 
                         if processed.get('price_amount', 0) > 0:
                             new_listings.append(processed)
                             new_found_count += 1
+                            # FIX: Update shared cache immediately to prevent Idxv2 from re-queuing
+                            if processed_cache is not None:
+                                processed_cache[mint_key] = current_price
                         else:
                             if mint_key in DEBUG_MINTS: logger.warning(f"🔍 [WATCH] Rejected {mint_key}: Price 0 or Invalid")
                     else:
