@@ -122,7 +122,7 @@ async def reaper(verification_queue: asyncio.Queue, listing_processing_queue: as
                     if datetime.now(timezone.utc) - last_analyzed_at > timedelta(hours=24):
                         logger.debug(f"Reaper: Queueing stale listing {listing.get('name')} for analysis (Priority 1).")
                         # Put in main queue with Priority 1 (Lower than new items)
-                        await listing_queue.put((1, next(queue_tie_breaker), listing))
+                        await listing_processing_queue.put((1, next(queue_tie_breaker), listing))
                 
                 await verification_queue.put(mint_address)
             else:

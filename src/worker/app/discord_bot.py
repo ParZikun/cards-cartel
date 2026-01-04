@@ -7,7 +7,7 @@ from discord import app_commands, ui, SelectOption
 from discord.ext import commands
 
 # Project imports
-from .core.discord_embeds import create_snipe_embed, create_card_check_embed
+from .core.discord_embeds import create_snipe_embed, create_card_check_embed, create_trace_embed
 from .core.magic_eden import check_listing_status_async
 from .core.alt_data import get_alt_data_async
 from database import main as database
@@ -175,24 +175,33 @@ class CartelBot(commands.Bot):
                 alert_level = snipe_data.get('alert_level')
                 duration = snipe_data.get('duration', 0.0)
 
-                embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration)
                 target_discord_id = snipe_data.get('target_discord_id')
                 broadcast_admins = snipe_data.get('broadcast_admins', False)
+                reason = snipe_data.get('reason')
                 
-                # --- 1. Target User DM (e.g. Autobuy Winner) ---
-                if target_discord_id:
+                # --- 1. Conditional Embed Creation ---
+                # We only create the rich embed for actual Deals (not Logs/Traces)
+                embed = None
+                if alert_level not in ['LOG', 'TRACE']:
+                    try:
+                        embed = create_snipe_embed(listing_data, snipe_details, alert_level, duration, reason=reason)
+                    except Exception as e:
+                        logging.error(f"Failed to create embed: {e}")
+                
+                # --- 2. Target User DM (e.g. Autobuy Winner) ---
+                if target_discord_id and embed:
                     try:
                         user = await bot.fetch_user(int(target_discord_id))
                         if user:
                             # Contextual Message
                             msg_prefix = "🎉 **You successfully sniped a card!**" if alert_level == 'AUTOBUY' else "🔔 **Private Alert:**"
                             await user.send(content=msg_prefix, embed=embed)
-                            logging.info(f"-> Sent User DM to {user.name} for: {listing_data['name']}")
+                            logging.info(f"-> Sent User DM to {user.name} for: {listing_data.get('name')}")
                     except Exception as e:
                         logging.error(f"Failed to send DM to target user {target_discord_id}: {e}")
 
-                # --- 2. Admin Broadcast (Red/Gold/Autobuy) ---
-                if broadcast_admins and ADMIN_IDS:
+                # --- 3. Admin Broadcast (Red/Gold/Autobuy) ---
+                if broadcast_admins and ADMIN_IDS and embed:
                     for admin_id in ADMIN_IDS:
                         # Avoid double DM if Admin is also the Buyer
                         if str(admin_id) == str(target_discord_id):
@@ -200,16 +209,15 @@ class CartelBot(commands.Bot):
                             
                         try:
                             # Using fetch_user can be rate limited if many, but for a few admins it's fine.
-                            # Better to cache users, but fetch_user caches too.
                             admin_user = await bot.fetch_user(admin_id)
                             if admin_user:
                                 await admin_user.send(content=f"🚨 **Admin Broadcast ({alert_level})**", embed=embed)
                         except Exception as e:
                             logging.warning(f"Failed to DM Admin {admin_id}: {e}")
 
-                # --- 3. Channel Notification Logic ---
-                ping_message = ""
+                # --- 4. Channel Notification Logic ---
                 channel_to_use = channel
+                ping_message = ""
                 
                 # Support for separate Log Channel
                 if alert_level == 'LOG':
@@ -221,7 +229,6 @@ class CartelBot(commands.Bot):
                                  channel_to_use = log_channel
                          except Exception:
                              pass
-                    ping_message = ""
                     
                 # Support for Verbose Card Logs (Trace)
                 elif alert_level == 'TRACE':
@@ -233,32 +240,30 @@ class CartelBot(commands.Bot):
                                  channel_to_use = trace_channel
                          except Exception:
                              pass
-                    # If TRACE but no channel, strictly do not send (spam prevention)
                     else:
-                        return 
-
-                    ping_message = ""
+                        continue # Skip trace if no channel configured
                 
                 elif alert_level in ['AUTOBUY', 'GOLD', 'HIGH', 'SUSPICIOUS', 'RISK']:
                      ping_message = f"<@&{ROLE_ID}>" 
                 
+                # --- Send to Channel ---
                 if alert_level == 'LOG':
-                     # Simple log format
                      reason = snipe_data.get('reason', 'No reason provided')
                      await channel_to_use.send(f"ℹ️ **System Log**: {reason}")
+                
                 elif alert_level == 'TRACE':
-                     # Detailed card trace
+                     # Detailed card trace with simplified embed
                      reason = snipe_data.get('reason', 'Processed')
-                     # listing_data might be partial if it was rejected early, need to be careful
-                     name = listing_data.get('name', 'Unknown')
-                     price = listing_data.get('price_amount', 0)
-                     await channel_to_use.send(f"🔍 **Card Trace**: {name} | {price} SOL\nSTATUS: {reason}")
-                else:
+                     embed = create_trace_embed(listing_data, reason, snipe_details)
+                     await channel_to_use.send(embed=embed)
+                
+                elif embed:
                      messageable = cast(discord.abc.Messageable, channel_to_use)
                      await messageable.send(content=ping_message, embed=embed)
                      
-                logging.info(f"-> Sent {alert_level} notification to Channel for: {listing_data['name']}")
-
+                safe_name = listing_data.get('name', 'Unknown') if listing_data else 'Unknown'
+                logging.info(f"-> Sent {alert_level} notification for: {safe_name}")
+                     
             except discord.errors.Forbidden as e:
                 logging.error(f"PERMISSION ERROR: The bot cannot send messages in channel {CHANNEL_ID}. Check bot permissions. Error: {e}")
             except discord.errors.HTTPException as e:

@@ -55,19 +55,39 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
     start_time = time.time()
     
     # --- HELPER: Trace Logger ---
-    async def log_trace(status_msg: str):
+    async def log_trace(status_msg: str, details_override: dict = None):
          # Only log if the Trace Channel is configured
          if not os.getenv('LIVE_CARD_LOGS_CHANNEL_ID'):
              return
          if queue:
              await queue.put({
                  'listing_data': listing, 
-                 'snipe_details': {}, 
+                 'snipe_details': details_override or {}, 
                  'alert_level': 'TRACE', 
                  'reason': status_msg,
                  'duration': time.time() - start_time,
                  'broadcast_admins': False
              })
+
+
+    # --- 0. DUPLICATE CHECK (Database) ---
+    # prevent re-processing the same listing if price hasn't changed.
+    # We do this AFTER the initial queue dump (trace) if you want to see it entering, 
+    # BUT to save spam let's do it here.
+    
+    # Check if we have this listing ID already
+    existing_db = await asyncio.to_thread(database.get_listing_by_id, listing.get('listing_id'))
+    if existing_db:
+         # Check price difference
+         old_price = existing_db.get('price_amount') or 0.0
+         new_price = listing.get('price_amount')
+         if new_price and abs(new_price - old_price) < 0.0001:
+             # Exactly the same price.
+             # Check if we already have a decision (skipped, etc)
+             # If it was skipped before, we still skip it.
+             # If it was a deal, we might want to re-alert? No, that's annoying.
+             # logger.info(f"⏭️ [Skipped] Duplicate: {listing.get('name')} (Price Unchanged)")
+             return False, 'DUPLICATE'
 
     # --- 0.5 STRICT FILTERING (Safety Net) ---
     # User Requirement: Pokemon Cards Only + PSA/BGS Only.
@@ -206,14 +226,26 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
             diff_percent = ((listing_price_usd - alt_value) / alt_value) * 100
             logger.warning(f"📉 Discount Calculated: {diff_percent:.2f}% (Price: ${listing_price_usd:.2f} vs Alt: ${alt_value:.2f})")
             
+            # --- OPTIMIZATION: Early Exit if Overpriced ---
+            if diff_percent > 0:
+                logger.info(f"⚪ [Early Exit] Overpriced: {diff_percent:.2f}% > 0%. Skipping.")
+                await log_trace(f"❌ **Rejected (Price)**: Overpriced by {diff_percent:.1f}%.", details_override=snipe_details)
+                await asyncio.to_thread(database.update_listing_status, listing['listing_id'], is_listed=True, cartel_category='SKIP')
+                return False, 'SKIP'
+
             # --- NOTIFICATION THRESHOLDS (TIER SYSTEM) ---
             
             # 1. HONEYPOT / SUSPICIOUS (>85% Discount)
             if diff_percent <= -85:
                 # Almost certainly a fake listing or "photo of card" or "box only"
                 logger.warning(f"⚠️ [SUSPICIOUS] {listing.get('name')} {diff_percent:.2f}% vs ${alt_value:.2f}")
-                # Log it to DB as suspended or just skip? 
-                # Let's log it but NOT autobuy.
+                
+                # Check Dedup for LOG
+                is_known = await asyncio.to_thread(database.check_recent_notification, listing['listing_id'], 'LOG')
+                if is_known:
+                     logger.info(f"⚪ [Dedupe] Skipping SUSPICIOUS alert for {listing.get('name')}")
+                     return False, 'Skipped'
+
                 # Send to LOG channel so admins can verify if it was a missed snipe.
                 msg = f"⚠️ **Suspicious / Risk**: {diff_percent:.1f}% Discount. (Price: ${listing_price_usd:.2f} vs Avg: ${alt_value:.2f}). Likely a scam/honeypot."
                 if queue:
@@ -227,7 +259,7 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
                         'broadcast_admins': False
                     })
                 # Trace Log
-                await log_trace(msg)
+                await log_trace(msg, details_override=snipe_details)
                 return False, 'SUSPICIOUS'
 
             # 2. AUTOBUY / GOLD (>30% Discount)
@@ -289,7 +321,7 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
              status_msg += f" -> **Alert: {alert_level}**"
         else:
              status_msg += " -> **No Deal** (Price too high)"
-        await log_trace(status_msg)
+        await log_trace(status_msg, details_override=snipe_details)
 
         # Critical: Verify logic runs only for AUTOBUY deals
         if cartel_category == 'AUTOBUY':
@@ -377,14 +409,25 @@ async def process_listing(listing: dict, queue: asyncio.Queue = None, send_alert
                         snipe_details.update(full_data) # Merge history/avg_price
 
             # Queue Alert
-            if send_alert and queue:
-                await queue.put({
-                    'listing_data': listing, 
-                    'snipe_details': snipe_details, 
-                    'alert_level': alert_level,
-                    'duration': time.time() - start_time,
-                    'broadcast_admins': broadcast_admins
-                })
+            # Queue Alert
+            if send_alert and queue and alert_level:
+                # --- Deduplication Check ---
+                is_known = await asyncio.to_thread(
+                    database.check_recent_notification, 
+                    listing['listing_id'], 
+                    alert_level
+                )
+                
+                if is_known:
+                     logger.info(f"⚪ [Dedupe] Skipping {alert_level} alert for {listing.get('name')} (Recently sent)")
+                else:
+                    await queue.put({
+                        'listing_data': listing, 
+                        'snipe_details': snipe_details, 
+                        'alert_level': alert_level,
+                        'duration': time.time() - start_time,
+                        'broadcast_admins': broadcast_admins
+                    })
             found_deal = True
        
         # Update DB

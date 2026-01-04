@@ -697,9 +697,12 @@ async def get_wallet_holdings(
         }
         
         headers = {
-            "accept": "application/json",
-            "Authorization": f"Bearer {os.getenv('MAGIC_EDEN_API_KEY', '')}"
+            "accept": "application/json"
         }
+        
+        # me_api_key = os.getenv('MAGIC_EDEN_API_KEY')
+        # if me_api_key:
+        #      headers["Authorization"] = f"Bearer {me_api_key}"
         
         async with httpx.AsyncClient() as client:
             response = await client.get(me_url, params=params, headers=headers)

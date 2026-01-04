@@ -127,11 +127,98 @@ async def recheck_listings(duration_str: str, queue: asyncio.Queue = None):
         logger.warning(f"Unknown duration {duration_str}, defaulting to 1 Hour.")
         since_timestamp = datetime.now(timezone.utc) - timedelta(hours=1)
 
+    new_deals_count = 0
+
+    # --- PHASE 1: Refresh Existing Deals (User Request) ---
+    # We want to ensure all currently "Active" deals are actually still active and valid.
+    logger.info("--- Phase 1: Refreshing currently active Cartel Deals ---")
+    active_deals = await asyncio.to_thread(database.get_active_deals_by_category, ['AUTOBUY', 'GOOD', 'OK'], limit=5000)
+    
+    if active_deals:
+        logger.info(f"Phase 1: Found {len(active_deals)} active deals to verify. Mints: {[d.get('token_mint') for d in active_deals]}")
+        
+        # Parallel fetch for speed
+        tasks = [me.check_listing_status_async(d['token_mint']) for d in active_deals]
+        results = await asyncio.gather(*tasks)
+        
+        for i, raw_data in enumerate(results):
+            original_deal = active_deals[i]
+            mint = original_deal['token_mint']
+            
+            if not raw_data or raw_data == 'not_found':
+                logger.info(f"Deal {mint} ({original_deal.get('name')}) is no longer listed. Removing.")
+                
+                # --- DELISTED NOTIFICATION LOGIC ---
+                # If it was a tracked deal (AUTOBUY/GOLD/RED/BLUE), alert that it's gone.
+                current_category = original_deal.get('cartel_category', 'SKIP')
+                if current_category in ['AUTOBUY', 'GOLD', 'GOOD', 'OK', 'HIGH', 'INFO']:
+                    msg = f"❌ **Delisted / Sold**: This deal is no longer available on Magic Eden."
+                    
+                    # Create a minimal listing dict for the embed
+                    listing_stub = {
+                        'name': original_deal.get('name', 'Unknown Card'),
+                        'token_mint': mint,
+                        'grading_company': original_deal.get('grading_company', 'N/A'),
+                        'grading_id': original_deal.get('grading_id', 'N/A'),
+                        'grade': original_deal.get('grade', 'N/A'),
+                        'insured_value': original_deal.get('insured_value', 0),
+                        'price_amount': original_deal.get('price_amount', 0),
+                        'price_currency': original_deal.get('price_currency', 'SOL'),
+                        'img_url': original_deal.get('img_url')
+                    }
+                    
+                    # We might not have fresh snipe details, use what we have or stub it.
+                    snipe_stub = {
+                        'difference_str': "❌ SOLD",
+                        'alt_value': original_deal.get('alt_value', 0),
+                        'avg_price': original_deal.get('avg_price', 0),
+                        'listing_price_usd': 0, # It's gone
+                        'confidence': original_deal.get('alt_value_confidence', 0),
+                        'supply': original_deal.get('supply', 'N/A'),
+                        'alt_asset_id': original_deal.get('alt_asset_id')
+                    }
+
+                    if queue:
+                         await queue.put({
+                            'listing_data': listing_stub, 
+                            'snipe_details': snipe_stub, 
+                            'alert_level': 'HIGH', # Use RED for Delisted visibility
+                            'reason': msg,
+                            'duration': 0,
+                            'broadcast_admins': False # Typically just to channel
+                        })
+
+                await asyncio.to_thread(database.update_listing_status, mint, is_listed=False)
+                continue
+                
+            # Process with fresh data
+            # Note: _process_listing expects a dict. check_listing_status_async returns a dict.
+            # We need to ensure we use the internal method or a public wrapper. 
+            # Since _process_listing is 'protected', we use it with care.
+            
+            processed_data = me._process_listing(raw_data)
+            if processed_data:
+                # Re-run processor logic (Alt Value check, Price comp, etc.)
+                # This ensures if price raised, it gets downgraded, or if dropped, upgraded.
+                found, _ = await processor.process_listing(processed_data, queue, send_alert=True)
+                if found:
+                    # If it's still a deal (or better), count it. 
+                    # Though technically we care more about finding *new* things, 
+                    # keeping this count is fine.
+                    pass
+            else:
+                # If _process_listing returns None, it means the item is invalid for us 
+                # (e.g. Price is 0/None, Blacklisted, or Attributes changed).
+                # Since it WAS an active deal, we must assume it is no longer valid/listed.
+                logger.info(f"Deal {mint} ({original_deal.get('name')}) is no longer valid (e.g. Sold/Delisted). Removing.")
+                await asyncio.to_thread(database.update_listing_status, mint, is_listed=False)
+    
+    logger.info("--- Phase 2: Checking 'SKIP' Listings ---")
     skipped_listings = await asyncio.to_thread(database.get_skipped_listings, since_timestamp)
 
     if not skipped_listings:
         logger.warning(f"Re-check initiated for {duration_str}, but no 'SKIP' listings found in that period.")
-        return 0
+        return new_deals_count
 
     logger.info(f"Found {len(skipped_listings)} 'SKIP' listings to re-process.")
     

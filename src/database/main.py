@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, Column, String, Float, Integer, Boolean, DateTime, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.dialects.postgresql import insert
@@ -17,7 +17,7 @@ DB_NAME = os.getenv("POSTGRES_DB", "cards_cartel")
 
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -198,12 +198,19 @@ def get_initial_reaper_queue_items() -> list[str]:
         logger.info(f"Found {len(rows)} items for the initial reaper queue.")
         return [row[0] for row in rows]
 
-def update_listing_status(mint_address: str, is_listed: bool):
-    """Updates the is_listed flag for a given listing."""
+def update_listing_status(mint_address: str, is_listed: bool, cartel_category: str = None):
+    """Updates the is_listed flag for a given listing, and optionally keys the category."""
     with get_session() as session:
-        session.query(Listing).filter(Listing.token_mint == mint_address).update({"is_listed": is_listed})
+        update_data = {"is_listed": is_listed}
+        if cartel_category:
+            update_data["cartel_category"] = cartel_category
+            
+        session.query(Listing).filter(Listing.token_mint == mint_address).update(update_data)
         session.commit()
-        logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
+        if cartel_category:
+            logger.info(f"Set is_listed={is_listed}, category={cartel_category} for mint {mint_address}")
+        else:
+            logger.info(f"Set is_listed={is_listed} for mint {mint_address}")
 
 def to_dict(obj):
     """Converts a SQLAlchemy model to a dictionary, excluding internal state."""
@@ -343,7 +350,7 @@ def get_global_blacklist() -> list[str]:
         settings = session.query(UserSettings).first()
         if settings and settings.blacklisted_keywords:
             return [k.strip().lower() for k in settings.blacklisted_keywords.split(',') if k.strip()]
-        return ['black star', 'sticker', 'stickers','mislabel', 'error', 'stamp', 'championship', 'french', 'german', 'spanish', 'turkish', 'russian', 'italian', 'sticker', 'coin', 'photo', 'authentic', 'authenticated', 'label', 'signature', 'sign', 'altered', 'damaged','test', 'miscut'] # Default fallback
+        return ['black star', 'sticker', 'stickers','mislabel', 'error', 'stamp', 'championship', 'french', 'german', 'spanish', 'turkish', 'russian', 'italian', 'sticker', 'coin', 'photo', 'authentic', 'authenticated', 'label', 'signature', 'sign', 'altered', 'damaged','test', 'miscut', 'Itzy'] # Default fallback
 
 def get_eligible_buyers(price_sol: float) -> list[dict]:
     """
@@ -376,3 +383,22 @@ def create_notification(user_wallet: str | None, title: str, message: str, type:
         session.add(notification)
         session.commit()
         logger.info(f"Notification created: {title} (User: {user_wallet})")
+
+def check_recent_notification(listing_id: str, alert_level: str, hours: int = 24) -> bool:
+    """
+    Checks if a notification for this listing_id and alert_level was sent in the last N hours.
+    Returns True if found (Duplicate), False otherwise.
+    """
+    try:
+        with get_session() as session:
+            since = datetime.utcnow() - timedelta(hours=hours)
+            # Use LIKE query because params is a JSON string
+            exists = session.query(Notification).filter(
+                Notification.type == alert_level,
+                Notification.created_at >= since,
+                Notification.params.like(f'%{listing_id}%')
+            ).first()
+            return True if exists else False
+    except Exception as e:
+        logger.error(f"Error checking recent notifications: {e}")
+        return False

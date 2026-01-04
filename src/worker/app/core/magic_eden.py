@@ -45,6 +45,43 @@ public_async_client = httpx.AsyncClient(headers=BASE_HEADERS, timeout=20)
 # Semaphore to prevent burst 429s (Limit to 2 concurrent checks)
 STATUS_CHECK_SEMAPHORE = asyncio.Semaphore(2)
 
+# Global Deduplication Manager
+class ProcessingManager:
+    def __init__(self):
+        self._processing_mints = set() # Active Locks
+        self._processed_cache = {} # Mint -> {price, time}
+        self.lock = asyncio.Lock()
+    
+    async def try_acquire(self, mint, price):
+        async with self.lock:
+            # 1. Check Active Lock
+            if mint in self._processing_mints:
+                return False, "LOCKED"
+            
+            # 2. Check Cache
+            cached = self._processed_cache.get(mint)
+            if cached and abs(cached['price'] - price) < 0.001:
+                # Same price = Duplicate
+                return False, "CACHE_HIT"
+            
+            # Acquire
+            self._processing_mints.add(mint)
+            return True, None
+
+    async def release(self, mint, price=None):
+        async with self.lock:
+            if mint in self._processing_mints:
+                self._processing_mints.remove(mint)
+            if price is not None:
+                self._processed_cache[mint] = {'price': price, 'time': time.time()}
+
+PROCESSING_MANAGER = ProcessingManager()
+
+# Watchlist for Debugging Missing Snipes
+DEBUG_MINTS = [
+    "EEpashtrTXY9xTWgN27BH5GxUYnhCDH44qWj2EZ8pRZL" # Full Art/Cynthia
+]
+
 def _get_attribute_value(attributes_list: list, target_trait: str):
     """Finds the value for a specific traitType within a list of attributes."""
     if not attributes_list: return None
@@ -238,8 +275,8 @@ async def _fetch_with_retries_async(url: str, params: dict, retries: int = 5, in
                 return data
             logger.warning(f"Unexpected data type from ME API: {type(data)}")
             return []
-        except httpx.RequestError as e:
-            logger.warning(f"ME API connection error (attempt {i+1}/{retries}): {e}")
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            logger.warning(f"ME API connection/status error (attempt {i+1}/{retries}): {e}")
             if i < retries - 1:
                 await asyncio.sleep(delay)
                 delay *= 2
@@ -420,36 +457,39 @@ async def fetch_new_listings_async(processed_cache: dict, processed_signatures: 
         new_found_count = 0
         for raw_item in results:
             if raw_item and raw_item != 'not_found' and isinstance(raw_item, dict):
-                # Ensure it's treated as a listing
-                # check_listing_status_async returns the /tokens/{mint} object
-                # It usually matches the structure _process_listing expects, mostly.
-                # It has 'price', 'attributes', 'owner' etc.
-                
-                # Check duplication against processed_ids
-                # The 'id' in this response is sometimes the mint or a specific ID
-                # _process_listing uses listing.get('id')
-                
-                # Optimization: Duplicate Check with Price
-                # Use Mint Address as the canonical ID for filtering
+                # Canonical ID
                 mint_key = raw_item.get('token_mint') or raw_item.get('mintAddress') or raw_item.get('tokenMint') or raw_item.get('id')
-                
                 current_price = float(raw_item.get('price', 0))
                 
-                if processed_cache is not None:
-                     last_price = processed_cache.get(mint_key)
-                     # Only skip if Mint exists AND Price is same
-                     if last_price is not None and abs(last_price - current_price) < 0.001:
-                         continue
+                # --- TRACE LOGGING (Watchlist) ---
+                if mint_key in DEBUG_MINTS:
+                    logger.warning(f"🔍 [WATCH] Processing Watchlist Mint: {mint_key} | Price: {current_price}")
+                
+                # --- GLOBAL DEDUPLICATION ---
+                # Try to acquire lock for this specific deal version (Mint + Price)
+                acquired, reason = await PROCESSING_MANAGER.try_acquire(mint_key, current_price)
+                if not acquired:
+                    if mint_key in DEBUG_MINTS:
+                        logger.warning(f"🔍 [WATCH] Skipped {mint_key}: {reason}")
+                    continue
 
-                processed = _process_listing(raw_item, blacklisted_keywords)
-                if processed:
-                    # Additional Validation: Ensure it is ACTUALLY listed
-                    if processed.get('price_amount', 0) > 0:
-                        new_listings.append(processed)
-                        if processed_cache is not None:
-                             processed_cache[mint_key] = current_price
-                        new_found_count += 1
+                try:
+                    processed = _process_listing(raw_item, blacklisted_keywords)
+                    if processed:
+                        # Validation
+                        if processed.get('price_amount', 0) > 0:
+                            new_listings.append(processed)
+                            new_found_count += 1
+                        else:
+                            if mint_key in DEBUG_MINTS: logger.warning(f"🔍 [WATCH] Rejected {mint_key}: Price 0 or Invalid")
+                    else:
+                        if mint_key in DEBUG_MINTS: logger.warning(f"🔍 [WATCH] Rejected {mint_key}: _process_listing returned None")
 
+                finally:
+                    # Release lock and update cache if we processed it (even if rejected, we saw this price)
+                    # Actually, if we rejected it, should we cache it? 
+                    # Yes, otherwise we re-process rejection every cycle.
+                    await PROCESSING_MANAGER.release(mint_key, current_price)
         if new_found_count > 0:
             logger.info(f"⚡ Found {new_found_count} fresh listings via Activity Feed!")
 
@@ -458,6 +498,31 @@ async def fetch_new_listings_async(processed_cache: dict, processed_signatures: 
         
     return new_listings, sold_mints
 
+async def get_wallet_activities_async(wallet_address: str, limit: int = 10):
+    """
+    Fetches recent activity for a specific wallet.
+    Endpoint: /v2/wallets/{wallet_address}/activities
+    """
+    url = f"https://api-mainnet.magiceden.dev/v2/wallets/{wallet_address}/activities"
+    params = {'offset': 0, 'limit': limit}
+    
+    try:
+        # Use the authenticated client if available, else public
+        # Assuming 'async_client' and 'public_async_client' are defined elsewhere
+        # and 'api_key' is a variable indicating if an API key is present.
+        # This part might need adjustment based on actual client setup.
+        client = async_client # if api_key else public_async_client # Simplified for this context
+        response = await client.get(url, params=params)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.warning(f"Wallet Activity Fetch Failed: {response.status_code} | {response.text}")
+            return []
+            
+    except Exception as e:
+        logger.error(f"Error fetching wallet activity for {wallet_address}: {e}")
+        return []
 
 async def fetch_all_listings_paginated_async(collection_symbol: str = 'collector_crypt', blacklisted_keywords: list[str] = None):
     """
@@ -563,6 +628,9 @@ async def check_listing_status_async(mint_address: str, retries: int = 5, initia
             
             if response.status_code == 200:
                 data = response.json()
+                # DEBUG: Dump the raw data for the problematic mint to see what fields we can use
+                if mint_address == "EBnLaJzkKcrtCA1N2ek2aBf8U8EB2orKuhXc4PCnYoN4":
+                    logger.warning(f"🔍 [DEBUG RAW] Data for Sold Mint {mint_address}: {json.dumps(data)}")
                 return data
             elif response.status_code == 404:
                 return "not_found"

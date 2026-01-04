@@ -29,6 +29,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # --- Competitor Watcher Service ---
+  watcher:
+    build:
+      context: .
+      dockerfile: src/worker/Dockerfile
+    container_name: sniper-watcher-local
+    volumes:
+      - ./scripts:/app/scripts
+      - ./src/worker:/app/worker
+      - ./src/database:/app/database
+    env_file:
+      - ./.env.local
+    environment:
+      - POSTGRES_HOST=postgres
+    command: python /app/scripts/watch_competitors.py
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # --- The API Service ---
   api:
     build:
@@ -41,6 +61,7 @@ services:
       - ./data:/app/data
       # Match Worker Logic: Mount source directly
       - ./src/api:/app/api
+      - ./src/worker:/app/worker # CRITICAL: Mount shared worker code (syncer, etc.)
       - ./src/database:/app/database
       # - ./src:/app/src (Removed)
     env_file:
